@@ -4,11 +4,10 @@ let loopTimeout = null;
 let isRunning = false;
 
 // laad modules één keer
-const { checkCaptcha } = require('./logic/captcha');
-const { handleTravel } = require('./logic/travel');
-const { handleCombat } = require('./logic/combat');
-const { handleGathering } = require('./logic/gathering');
-const { handleQuests } = require('./logic/quests');
+const { checkCaptcha } = require('./captcha');
+const { handleTravel } = require('./travel');
+const { handleCombat } = require('./combat');
+const { handleQuests } = require('./quests');
 
 function startBotLoop(socket, page, settings, sessionStats) {
   if (isRunning) {
@@ -48,17 +47,12 @@ function startBotLoop(socket, page, settings, sessionStats) {
       let delay = 0;
 
       if (s.combat) {
-        delay = await handleCombat(page, socket);
+        delay = await handleCombat(page, socket, stats);
         if (delay > 0) return (loopTimeout = setTimeout(runLoop, delay));
       }
 
       if (s.quests) {
         delay = await handleQuests(page, socket);
-        if (delay > 0) return (loopTimeout = setTimeout(runLoop, delay));
-      }
-
-      if (s.resources) {
-        delay = await handleGathering(page, socket);
         if (delay > 0) return (loopTimeout = setTimeout(runLoop, delay));
       }
 

@@ -7,7 +7,7 @@ function isNavDestroy(err) {
   return msg.includes('Execution context was destroyed') || msg.includes('Cannot find context');
 }
 
-async function handleCombat(page, socket) {
+async function handleCombat(page, socket, sessionStats) {
   try {
     const url = page.url();
     const likelyCombat = url.includes('/combat') || url.includes('monster');
@@ -34,7 +34,23 @@ async function handleCombat(page, socket) {
       }
     };
 
-    // Confirm/OK/Yes eerst
+    // Loot eerst, zodat drops zichtbaar worden in dashboard
+    for (const el of elements) {
+      const textRaw = await getText(el);
+      const text = textRaw.toLowerCase();
+      if (!text) continue;
+      if (!text.includes('loot')) continue;
+      if (!(await isClickable(el))) continue;
+
+      await clickSoft(el);
+      sessionStats.items = (sessionStats.items || 0) + 1;
+      socket.emit('new-loot', `Loot: ${textRaw}`);
+      socket.emit('update-stats', sessionStats);
+      socket.emit('bot-log', `Loot gepakt: ${textRaw}`);
+      return humanDelay('close', 900, 1600, { quick: true });
+    }
+
+    // Confirm/OK/Yes daarna
     for (const el of elements) {
       const text = (await getText(el)).toLowerCase();
       if (!text) continue;

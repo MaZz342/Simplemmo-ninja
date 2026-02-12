@@ -1,0 +1,41 @@
+Verbeterpunten (geprioriteerd)
+
+1) Kritiek - Fix startup crash in bot imports
+- Bestand: logic/bot-logic.js
+- Probleem: Verkeerde relatieve paden (`./logic/...`) binnen de map `logic/`.
+- Actie: gebruik `./captcha`, `./travel`, `./combat`, `./gathering`, `./quests`.
+
+2) Kritiek - Dependencies reproduceerbaar maken
+- Bestand: package.json
+- Probleem: `puppeteer-extra` en `puppeteer-extra-plugin-stealth` ontbreken als dependency.
+- Actie: expliciet toevoegen aan dependencies.
+
+3) Hoog - Ontbrekende stat/loot event stroom
+- Bestand: public/index.html en backend logic/server
+- Probleem: UI luistert op `update-stats` en `new-loot`, maar backend emit deze niet.
+- Actie: backend events toevoegen zodat dashboard live data toont.
+
+4) Hoog - Netjes stoppen bij disconnect/shutdown
+- Bestand: server.js / browser.js
+- Probleem: loop/browser kan doorlopen na disconnect.
+- Actie: `stopLoop()` + browser cleanup op disconnect/SIGINT/SIGTERM.
+
+5) Hoog - Multi-client state conflicts voorkomen
+- Bestand: server.js / browser.js
+- Probleem: globale state is single-session, maar meerdere sockets zijn mogelijk.
+- Actie: session lock of expliciet single-controller model.
+
+6) Middel - Actie-engine consolideren
+- Bestand: logic/bot-logic.js en logic/travel.js
+- Probleem: overlap in combat/resource gedrag.
+- Actie: 1 centrale beslislaag om dubbelgedrag/races te voorkomen.
+
+7) Middel - Configuratie portabel maken
+- Bestand: browser.js
+- Probleem: hardcoded Windows paden als defaults.
+- Actie: env-validatie + duidelijke foutmelding + .env.example.
+
+8) Middel - Documentatie en basis tests
+- Bestand: README.md / tests
+- Probleem: README is minimaal en er zijn geen geautomatiseerde checks.
+- Actie: setup/run/debug documenteren + minimaal smoke test pad.

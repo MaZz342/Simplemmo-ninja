@@ -230,23 +230,26 @@ async function handleTravel(page, settings, sessionStats, socket) {
     const cls = btns.find(b => vis(b) && /leave|close|continue|back to travel|collect loot/i.test(raw(b)));
     if (cls) { clickHumanly(cls); return { type: 'close', name: raw(cls) }; }
 
-    // Step
-    const stp = btns.find(b => vis(b) && txt(b).includes('take a step'));
-    if (stp) { clickHumanly(stp); return { type: 'step' }; }
-
     // Open/start resource (alleen als niet in cooldown)
+    // Prioriteit boven "take a step", zodat catch/salvage op travel niet gemist worden.
     if (!cfg.__cooldown) {
       const startRes = btns.find(b => vis(b) && (
         txt(b).includes('gather') ||
         txt(b).includes('mine') ||
         txt(b).includes('chop') ||
         txt(b).includes('catch') ||
+        txt(b).includes('catching') ||
         txt(b).includes('salvage') ||
+        txt(b).includes('salvaging') ||
         txt(b).includes('harvest') ||
         txt(b).includes('fish')
       ));
       if (cfg.resources && startRes) { clickHumanly(startRes); return { type: 'opening', name: raw(startRes) }; }
     }
+
+    // Step (fallback)
+    const stp = btns.find(b => vis(b) && txt(b).includes('take a step'));
+    if (stp) { clickHumanly(stp); return { type: 'step' }; }
 
     return { type: 'none' };
   }, { ...settings, __cooldown: cooldownActive }).catch((e) => ({ type: 'eval_error', name: e.message }));
@@ -272,12 +275,18 @@ async function handleTravel(page, settings, sessionStats, socket) {
 
   if (result.type === 'close') {
     socket.emit('bot-log', `Afsluiten: ${result.name}`);
+    if (/collect loot/i.test(result.name || '')) {
+      sessionStats.items = (sessionStats.items || 0) + 1;
+      socket.emit('new-loot', `Loot: ${result.name}`);
+      socket.emit('update-stats', sessionStats);
+    }
     return humanDelay('close', 1000, 1800);
   }
 
   if (result.type === 'step') {
     sessionStats.steps = (sessionStats.steps || 0) + 1;
     socket.emit('bot-log', `Stap ${sessionStats.steps} gezet`);
+    socket.emit('update-stats', sessionStats);
     return humanDelay('step', 3400, 5800);
   }
 

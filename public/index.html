@@ -141,6 +141,7 @@
 
   <script>
     const socket = io();
+    let isRunning = false;
 
     function playAlarmBeep() {
       try {
@@ -223,6 +224,7 @@
     });
 
     socket.on('status', running => {
+      isRunning = !!running;
       const btn = document.getElementById('btn-toggle');
       const status = document.getElementById('status');
       btn.textContent = running ? 'Stop Bot' : 'Start Bot';
@@ -245,6 +247,11 @@
     document.getElementById('btn-browser').onclick = () => socket.emit('start-browser');
 
     document.getElementById('btn-toggle').onclick = () => {
+      if (isRunning) {
+        socket.emit('stop-bot');
+        return;
+      }
+
       socket.emit('toggle-bot', {
         combat: document.getElementById('combat').checked,
         resources: document.getElementById('resources').checked

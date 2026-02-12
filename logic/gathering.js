@@ -1,80 +1,70 @@
-// logic/gathering.js (Puppeteer)
+// logic/gathering.js — veilig (geen elementHandle.click), alleen op /travel
 
 async function handleGathering(page, socket) {
-    try {
-        const candidates = await page.$$('button, a, [role="button"], .btn');
+  try {
+    const url = page.url();
+    if (!url.includes('/travel')) return 0;
 
-        const hasAny = (t) => {
-            const s = (t || '').toLowerCase();
-            return (
-                s.includes('gather') ||
-                s.includes('mine') ||
-                s.includes('chop') ||
-                s.includes('catch') ||
-                s.includes('salvage') ||
-                s.includes('woodcut') ||
-                s.includes('fishing') ||
-                s.includes('farming') ||
-                s.includes('harvest')
-            );
-        };
+    const result = await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
+      const vis = (b) => b && b.offsetParent !== null;
 
-        for (const el of candidates) {
-            const text = await page
-                .evaluate(e => (e.innerText || e.textContent || e.value || '').trim(), el)
-                .catch(() => '');
+      const clickHumanly = (el) => {
+        const rect = el.getBoundingClientRect();
+        const x = rect.left + (Math.random() * rect.width);
+        const y = rect.top + (Math.random() * rect.height);
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+      };
 
-            if (!hasAny(text)) continue;
+      const isDisabled = (el) => {
+        const style = window.getComputedStyle(el);
+        return !!(
+          el.disabled ||
+          el.getAttribute('aria-disabled') === 'true' ||
+          el.hasAttribute('disabled') ||
+          style.pointerEvents === 'none'
+        );
+      };
 
-            const disabled = await page
-                .evaluate(e => {
-                    const style = window.getComputedStyle(e);
-                    return !!(
-                        e.disabled ||
-                        e.getAttribute('aria-disabled') === 'true' ||
-                        e.hasAttribute('disabled') ||
-                        style.pointerEvents === 'none'
-                    );
-                }, el)
-                .catch(() => true);
+      // Alleen resource-achtige knoppen
+      const isResource = (t) => {
+        const s = (t || '').toLowerCase();
+        return (
+          s.includes('gather') ||
+          s.includes('mine') ||
+          s.includes('chop') ||
+          s.includes('catch') ||
+          s.includes('salvage') ||
+          s.includes('woodcut') ||
+          s.includes('fishing') ||
+          s.includes('farming') ||
+          s.includes('harvest')
+        );
+      };
 
-            if (disabled) continue;
+      for (const b of btns) {
+        if (!vis(b) || isDisabled(b)) continue;
+        const text = (b.innerText || b.textContent || '').trim();
+        if (!text) continue;
+        if (!isResource(text)) continue;
 
-            try { await el.evaluate(n => n.scrollIntoView({ block: 'center' })); } catch {}
-            await page.waitForTimeout(150 + Math.random() * 250);
-            await el.click({ delay: 50 + Math.random() * 120, timeout: 15000 });
-            socket.emit('bot-log', `⛏️ Gathering gestart (${text})`);
-            return 2000 + Math.random() * 2000;
-        }
+        clickHumanly(b);
+        return { clicked: true, text };
+      }
 
-        const collectWords = ['collect', 'loot', 'pick up', 'gather now', 'click here'];
-        for (const el of candidates) {
-            const text = await page
-                .evaluate(e => (e.innerText || e.textContent || e.value || '').trim(), el)
-                .catch(() => '');
+      return { clicked: false };
+    });
 
-            const low = text.toLowerCase();
-            if (!collectWords.some(w => low.includes(w))) continue;
-
-            const disabled = await page
-                .evaluate(e => e.disabled || e.getAttribute('aria-disabled') === 'true' || e.hasAttribute('disabled'), el)
-                .catch(() => true);
-
-            if (disabled) continue;
-
-            try { await el.evaluate(n => n.scrollIntoView({ block: 'center' })); } catch {}
-            await page.waitForTimeout(120 + Math.random() * 220);
-            await el.click({ delay: 40 + Math.random() * 110, timeout: 15000 });
-            socket.emit('bot-log', `🎒 Loot/Collect geklikt (${text})`);
-            return 1500 + Math.random() * 1500;
-        }
-
-        return 0;
-    } catch (err) {
-        console.error('[gathering] Fout:', err.message);
-        socket.emit('bot-log', `Gathering fout: ${err.message}`);
-        return 5000;
+    if (result.clicked) {
+      socket.emit('bot-log', `⛏️ Gathering klik (safe): ${result.text}`);
+      return 1800 + Math.random() * 1800;
     }
+
+    return 0;
+  } catch (err) {
+    socket.emit('bot-log', `Gathering fout: ${err.message}`);
+    return 2000;
+  }
 }
 
 module.exports = { handleGathering };

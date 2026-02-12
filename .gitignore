@@ -1,0 +1,13 @@
+# Dependencies
+/node_modules
+
+# Puppeteer user data
+/puppeteer_profile
+
+# Environment variables
+.env
+
+# Temporary files
+.tmp
+*.tmp
+*.log

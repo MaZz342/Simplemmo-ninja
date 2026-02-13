@@ -7,6 +7,8 @@ const { humanDelay } = require('./human-delay');
 let lastOpenAt = 0;
 let awaitingPopupUntil = 0;
 let resourceCooldownUntil = 0;
+let lastGatherActionAt = 0;
+const MIN_GATHER_ACTION_INTERVAL_MS = 5200;
 const seenLootKeys = new Set();
 
 async function safeGoto(page, url, socket) {
@@ -106,6 +108,11 @@ async function closePopupByXRetry(page, socket) {
 }
 
 async function clickGatherPopupButton(page, socket) {
+  const sinceLastGather = Date.now() - lastGatherActionAt;
+  if (sinceLastGather < MIN_GATHER_ACTION_INTERVAL_MS) {
+    return false;
+  }
+
   const btn = await page.$('#gather_button');
   if (!btn) return false;
 
@@ -129,24 +136,18 @@ async function clickGatherPopupButton(page, socket) {
     return true;
   }
 
-  const clickedViaDom = await btn.evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const evInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
-    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-    try { el.dispatchEvent(new MouseEvent('mousedown', evInit)); } catch {}
-    try { el.dispatchEvent(new MouseEvent('mouseup', evInit)); } catch {}
-    try { el.dispatchEvent(new MouseEvent('click', evInit)); } catch {}
-    try { el.click(); return true; } catch { return false; }
-  }).catch(() => false);
-  if (!clickedViaDom) {
-    const clickedViaPptr = await btn.click({ delay: 120 + Math.random() * 180 }).then(() => true).catch(() => false);
-    if (!clickedViaPptr) {
+  const clickedViaPptr = await btn.click({ delay: 120 + Math.random() * 180 }).then(() => true).catch(() => false);
+  if (!clickedViaPptr) {
+    const clickedViaDom = await btn.evaluate((el) => {
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      try { el.click(); return true; } catch { return false; }
+    }).catch(() => false);
+    if (!clickedViaDom) {
       socket.emit('bot-log', 'Popup: gather_button click failed');
       return false;
     }
   }
+  lastGatherActionAt = Date.now();
   socket.emit('bot-log', `Popup: gather_button click (${info.label || 'gather'})`);
 
   // even wachten zodat gather echt start
@@ -353,24 +354,17 @@ async function handleTravel(page, settings, sessionStats, socket) {
       sessionStats.steps = (sessionStats.steps || 0) + 1;
       socket.emit('bot-log', `Resource skipped: skill level too low (${Math.round(cd / 1000)}s cooldown), stepped anyway`);
       socket.emit('update-stats', sessionStats);
-      return humanDelay('step', 3200, 5200);
+      return humanDelay('step', 2200, 3800);
     }
 
     socket.emit('bot-log', `Resource skipped: skill level too low (${Math.round(cd / 1000)}s cooldown), no step button found`);
-    return humanDelay('step', 2800, 4600);
+    return humanDelay('step', 2000, 3400);
   }
 
   const result = await page.evaluate((cfg) => {
     const clickHumanly = (el) => {
-      const rect = el.getBoundingClientRect();
-      const x = rect.left + (Math.random() * rect.width);
-      const y = rect.top + (Math.random() * rect.height);
-      const evInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
       try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-      try { el.dispatchEvent(new MouseEvent('mousedown', evInit)); } catch {}
-      try { el.dispatchEvent(new MouseEvent('mouseup', evInit)); } catch {}
-      try { el.dispatchEvent(new MouseEvent('click', evInit)); } catch {}
-      try { el.click(); } catch {}
+      try { el.click(); return true; } catch { return false; }
     };
 
     const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
@@ -385,12 +379,12 @@ async function handleTravel(page, settings, sessionStats, socket) {
     // Confirm
     const confirmAtk = btns.find(b => vis(b) && txt(b) === 'attack');
     const confirmGather = btns.find(b => vis(b) && txt(b).includes('click here to gather'));
-    if (cfg.combat && confirmAtk) { clickHumanly(confirmAtk); return { type: 'executing', name: 'Attack' }; }
-    if (cfg.resources && confirmGather) { clickHumanly(confirmGather); return { type: 'executing', name: 'Click here to gather' }; }
+    if (cfg.combat && confirmAtk && clickHumanly(confirmAtk)) { return { type: 'executing', name: 'Attack' }; }
+    if (cfg.resources && confirmGather && clickHumanly(confirmGather)) { return { type: 'executing', name: 'Click here to gather' }; }
 
     // Close/collect/continue/back
     const cls = btns.find(b => vis(b) && /leave|close|continue|back to travel|collect loot/i.test(raw(b)));
-    if (cls) { clickHumanly(cls); return { type: 'close', name: raw(cls) }; }
+    if (cls && clickHumanly(cls)) { return { type: 'close', name: raw(cls) }; }
 
     // Open/start resource (alleen als niet in cooldown)
     // Prioriteit boven "take a step", zodat catch/salvage op travel niet gemist worden.
@@ -407,12 +401,12 @@ async function handleTravel(page, settings, sessionStats, socket) {
         txt(b).includes('fish') ||
         txt(b).includes('forage')
       ));
-      if (cfg.resources && startRes) { clickHumanly(startRes); return { type: 'opening', name: raw(startRes) }; }
+      if (cfg.resources && startRes && clickHumanly(startRes)) { return { type: 'opening', name: raw(startRes) }; }
     }
 
     // Step (fallback)
     const stp = btns.find(b => vis(b) && txt(b).includes('take a step'));
-    if (stp) { clickHumanly(stp); return { type: 'step' }; }
+    if (stp && clickHumanly(stp)) { return { type: 'step' }; }
 
     return { type: 'none' };
   }, { ...settings, __cooldown: cooldownActive }).catch((e) => ({ type: 'eval_error', name: e.message }));
@@ -436,6 +430,10 @@ async function handleTravel(page, settings, sessionStats, socket) {
     if ((result.name || '').toLowerCase() === 'attack') {
       return humanDelay('combat', 3600, 5600, { afterCombat: true });
     }
+    if ((result.name || '').toLowerCase().includes('gather')) {
+      lastGatherActionAt = Date.now();
+      return humanDelay('resource', 3200, 5200, { afterResource: true });
+    }
     return humanDelay('combat', 2600, 4200, { afterCombat: true });
   }
 
@@ -453,7 +451,7 @@ async function handleTravel(page, settings, sessionStats, socket) {
     sessionStats.steps = (sessionStats.steps || 0) + 1;
     socket.emit('bot-log', `Step ${sessionStats.steps} taken`);
     socket.emit('update-stats', sessionStats);
-    return humanDelay('step', 3400, 5800);
+    return humanDelay('step', 2200, 4000);
   }
 
   if (result.type === 'eval_error') {
@@ -461,7 +459,7 @@ async function handleTravel(page, settings, sessionStats, socket) {
     return humanDelay('close', 1400, 2400, { afterNav: true });
   }
 
-  return humanDelay('step', 3200, 5200);
+  return humanDelay('step', 2000, 3600);
 }
 
 module.exports = { handleTravel };

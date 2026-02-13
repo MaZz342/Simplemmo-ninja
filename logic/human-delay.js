@@ -72,11 +72,16 @@ function humanDelay(type, baseMin, baseMax, opts = {}) {
   // basis delay
   let delay = softSkew(baseMin, baseMax);
 
+  // tempo-variatie: meestal normaal, soms sneller of juist trager
+  const paceRoll = Math.random();
+  if (paceRoll < 0.18) delay *= rand(0.84, 0.95);
+  else if (paceRoll > 0.86) delay *= rand(1.10, 1.28);
+
   // anti-spam: rem bij extreem snelle opvolgende acties
   if (sinceLastAction < 1800) {
-    delay += rand(700, 1800);
+    delay += rand(500, 1350);
   } else if (sinceLastAction < 3200) {
-    delay += rand(250, 900);
+    delay += rand(180, 700);
   }
 
   // streak invloed: als je veel hetzelfde doet, soms iets trager
@@ -84,21 +89,26 @@ function humanDelay(type, baseMin, baseMax, opts = {}) {
   if (state.streak >= 8) delay *= 1.15;
   if (state.streak >= 12) delay *= 1.22;
 
+  // stappen mogen iets vlotter blijven dan combat/resource loops
+  if (type === 'step') {
+    delay *= rand(0.84, 1.04);
+  }
+
   // fatigue invloed
   delay *= (1 + state.fatigue * 0.18);
 
   // optionele context
-  if (opts.afterResource) delay *= 1.18;
-  if (opts.afterCombat) delay *= 1.10;
+  if (opts.afterResource) delay *= 1.10;
+  if (opts.afterCombat) delay *= 1.08;
   if (opts.afterNav) delay *= 1.05;
-  if (opts.quick) delay *= 0.93;
+  if (opts.quick) delay *= 0.90;
 
   // micro-pause: heel klein menselijk “twijfel”-moment
-  if (should(0.35)) delay += rand(120, 650);
+  if (should(0.32)) delay += rand(90, 520);
 
   // afleiding: zelden, maar wel echt (niet te vaak)
   const canDistract = (now - state.lastDistractionAt) > 90000; // max 1x per 90s
-  if (canDistract && should(type === 'step' ? 0.06 : 0.035)) {
+  if (canDistract && should(type === 'step' ? 0.045 : 0.035)) {
     const extra = rand(4000, 12000);
     delay += extra;
     state.lastDistractionAt = now;

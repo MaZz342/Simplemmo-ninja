@@ -65,6 +65,7 @@ const sessionStats = {
 let botRunning = false;
 let cleanupInProgress = null;
 let controllerSocketId = null;
+const DASHBOARD_STATS_MS = Number(process.env.DASHBOARD_STATS_MS || 2000);
 
 function isController(socket) {
   return controllerSocketId === socket.id;
@@ -166,7 +167,7 @@ io.on('connection', (socket) => {
   };
 
   emitStats();
-  const statsInterval = setInterval(emitStats, 1000);
+  const statsInterval = setInterval(emitStats, DASHBOARD_STATS_MS);
   socket.emit('browser-window-config', getBrowserWindowConfig());
 
   const doStartBrowser = async () => {

@@ -48,11 +48,11 @@ function updateState(type) {
 function decayFatigue() {
   const now = Date.now();
   const idle = now - (state.lastActionAt || now);
-  if (idle > 15000) {
+  if (idle > 60000) {
+    state.fatigue = clamp(state.fatigue - 0.12, 0, 1);
+  } else if (idle > 15000) {
     // 15s idle => iets frisser
     state.fatigue = clamp(state.fatigue - 0.06, 0, 1);
-  } else if (idle > 60000) {
-    state.fatigue = clamp(state.fatigue - 0.12, 0, 1);
   }
 }
 

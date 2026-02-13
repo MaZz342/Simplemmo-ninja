@@ -56,13 +56,13 @@ async function handleGathering(page, socket) {
     });
 
     if (result.clicked) {
-      socket.emit('bot-log', `⛏️ Gathering klik (safe): ${result.text}`);
+      socket.emit('bot-log', `⛏️ Gathering click (safe): ${result.text}`);
       return 1800 + Math.random() * 1800;
     }
 
     return 0;
   } catch (err) {
-    socket.emit('bot-log', `Gathering fout: ${err.message}`);
+    socket.emit('bot-log', `Gathering error: ${err.message}`);
     return 2000;
   }
 }

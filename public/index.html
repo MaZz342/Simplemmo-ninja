@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="nl" class="dark">
 <head>
   <meta charset="UTF-8" />
@@ -6,13 +6,14 @@
   <script src="/socket.io/socket.io.js"></script>
   <style>
     :root {
-      --brand: #f39c12;
+      --brand: #f59e0b;
+      --indigo: #4f46e5;
       --bg: #0b0f1a;
-      --card: #161b28;
-      --border: #2d3343;
-      --green: #2ecc71;
-      --red: #e74c3c;
-      --text: #abb2bf;
+      --card: #111827;
+      --border: #334155;
+      --green: #4ade80;
+      --red: #f87171;
+      --text: #cbd5e1;
     }
     body {
       margin: 0;
@@ -24,17 +25,122 @@
       flex-direction: column;
     }
     .top-bar {
-      background: var(--card);
+      background: linear-gradient(180deg, rgba(17,24,39,0.96) 0%, rgba(15,23,42,0.96) 100%);
       border-bottom: 1px solid var(--border);
-      padding: 12px 20px;
-      display: flex;
-      justify-content: space-around;
-      font-weight: bold;
+      padding: 8px 10px;
+      display: grid;
+      grid-template-columns: repeat(8, minmax(120px, 1fr));
+      gap: 6px;
+      font-weight: 700;
       position: relative;
     }
+    .stat-item {
+      background: rgba(148, 163, 184, 0.08);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
     .stat-item span { color: var(--brand); }
+    .user-chip {
+      grid-column: 1 / span 4;
+      text-align: left;
+      font-size: 12px;
+      color: #d4dae5;
+      font-weight: 600;
+      padding: 4px 2px 2px;
+    }
+    .user-chip span {
+      color: #93c5fd;
+    }
+    .sync-chip {
+      grid-column: 5 / span 4;
+      text-align: right;
+      font-size: 11px;
+      color: #93a0b5;
+      margin-top: 0;
+      padding: 4px 2px 2px;
+    }
+    .progress-wrap {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+      margin-top: 0;
+    }
+    .mini-progress {
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.9);
+      padding: 5px 7px;
+      font-size: 10px;
+      color: #cbd5e1;
+    }
+    .mini-label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+    }
+    .mini-bar {
+      height: 5px;
+      background: #253044;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .mini-bar > span {
+      display: block;
+      height: 100%;
+      width: 0%;
+      transition: width 0.4s ease;
+    }
+    #xpProgress { background: #4ade80; }
+    #hpProgress { background: #f87171; }
+    #qpProgress { background: #4ade80; }
+    .pct-good { color: #4ade80 !important; }
+    .pct-warn { color: #f59e0b !important; }
+    .pct-bad { color: #f87171 !important; }
+    .stat-good {
+      border-color: rgba(74, 222, 128, 0.45) !important;
+      background: rgba(74, 222, 128, 0.08) !important;
+    }
+    .stat-warn {
+      border-color: rgba(245, 158, 11, 0.5) !important;
+      background: rgba(245, 158, 11, 0.1) !important;
+    }
+    .stat-bad {
+      border-color: rgba(248, 113, 113, 0.55) !important;
+      background: rgba(248, 113, 113, 0.11) !important;
+    }
 
-    /* ✅ Alarm banner */
+    @media (max-width: 1080px) {
+      .top-bar {
+        grid-template-columns: repeat(4, minmax(120px, 1fr));
+      }
+      .user-chip {
+        grid-column: 1 / span 2;
+      }
+      .sync-chip {
+        grid-column: 3 / span 2;
+      }
+    }
+    @media (max-width: 760px) {
+      .top-bar {
+        grid-template-columns: repeat(2, minmax(130px, 1fr));
+      }
+      .user-chip {
+        grid-column: 1 / -1;
+      }
+      .sync-chip {
+        grid-column: 1 / -1;
+        text-align: left;
+      }
+      .progress-wrap {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* âœ… Alarm banner */
     .alarm-banner {
       display: none;
       position: absolute;
@@ -62,6 +168,24 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
+      overflow-y: auto;
+    }
+    .sidebar .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: #9aa3b2;
+    }
+    .sidebar select,
+    .sidebar input[type="number"] {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #0f1420;
+      color: var(--text);
+      box-sizing: border-box;
     }
     .main-content {
       flex: 1;
@@ -109,13 +233,33 @@
 </head>
 <body>
 
-  <div class="top-bar">
-    <div class="stat-item">Stappen: <span id="steps">0</span></div>
-    <div class="stat-item">Goud: <span id="gold">0</span></div>
-    <div class="stat-item">XP: <span id="xp">0</span></div>
-    <div class="stat-item">Items: <span id="items">0</span></div>
+    <div class="top-bar">
+    <div class="user-chip">User: <span id="username">-</span></div>
+    <div class="sync-chip">Last sync: <span id="lastSync">no data yet</span></div>
+    <div class="stat-item">Level: <span id="level">0</span></div>
+    <div class="stat-item">Gold: <span id="gold">0</span></div>
+    <div class="stat-item">Bank: <span id="bank">0</span></div>
+    <div class="stat-item">Diamonds: <span id="diamonds">0</span></div>
+    <div class="stat-item">Total Steps: <span id="totalSteps">0</span></div>
+    <div class="stat-item">XP Remaining: <span id="xp">0</span></div>
+    <div class="stat-item">Quest: <span id="qp">0/0</span></div>
+    <div class="stat-item">Life: <span id="hp">0/0</span></div>
 
-    <div id="alarmBanner" class="alarm-banner">🚨 ALARM</div>
+    <div id="alarmBanner" class="alarm-banner">ALARM</div>
+    <div class="progress-wrap">
+      <div class="mini-progress">
+        <div class="mini-label"><span>XP progress</span><span id="xpProgressText">0%</span></div>
+        <div class="mini-bar"><span id="xpProgress"></span></div>
+      </div>
+      <div class="mini-progress">
+        <div class="mini-label"><span>Health</span><span id="hpProgressText">0%</span></div>
+        <div class="mini-bar"><span id="hpProgress"></span></div>
+      </div>
+      <div class="mini-progress">
+        <div class="mini-label"><span>Quest points</span><span id="qpProgressText">0%</span></div>
+        <div class="mini-bar"><span id="qpProgress"></span></div>
+      </div>
+    </div>
   </div>
 
   <div class="container">
@@ -123,6 +267,23 @@
       <button id="btn-browser" class="btn btn-start">Open Browser</button>
       <button id="btn-toggle" class="btn btn-start">Start Bot</button>
       <hr style="border-color:var(--border);margin:15px 0;">
+      <div class="field">
+        <label for="browserMode">Browser mode</label>
+        <select id="browserMode">
+          <option value="maximized">Maximized</option>
+          <option value="windowed">Windowed</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="browserWidth">Breedte</label>
+        <input type="number" id="browserWidth" min="800" max="3840" step="10" value="1400" />
+      </div>
+      <div class="field">
+        <label for="browserHeight">Hoogte</label>
+        <input type="number" id="browserHeight" min="600" max="2160" step="10" value="900" />
+      </div>
+      <button id="btn-apply-window" class="btn btn-start">Apply Browser Size</button>
+      <hr style="border-color:var(--border);margin:6px 0;">
       <label><input type="checkbox" id="combat" checked> Combat</label>
       <label><input type="checkbox" id="resources" checked> Gathering</label>
     </div>
@@ -142,6 +303,39 @@
   <script>
     const socket = io();
     let isRunning = false;
+    let browserWindow = { mode: 'maximized', width: 1400, height: 900 };
+    let lastStatsSeenAt = 0;
+
+    setInterval(() => {
+      const label = document.getElementById('lastSync');
+      if (!lastStatsSeenAt) {
+        label.innerText = 'no data yet';
+        return;
+      }
+      const ageSec = Math.max(0, Math.floor((Date.now() - lastStatsSeenAt) / 1000));
+      label.innerText = `${ageSec}s ago`;
+    }, 1000);
+
+    function readWindowConfigFromUi() {
+      const mode = document.getElementById('browserMode').value;
+      const width = Number(document.getElementById('browserWidth').value || 1400);
+      const height = Number(document.getElementById('browserHeight').value || 900);
+      return { mode, width, height };
+    }
+
+    function applyWindowConfigToUi(cfg) {
+      const mode = cfg?.mode === 'windowed' ? 'windowed' : 'maximized';
+      const width = Number(cfg?.width || 1400);
+      const height = Number(cfg?.height || 900);
+      document.getElementById('browserMode').value = mode;
+      document.getElementById('browserWidth').value = width;
+      document.getElementById('browserHeight').value = height;
+      browserWindow = { mode, width, height };
+    }
+
+    function sendWindowConfig() {
+      socket.emit('set-browser-window', readWindowConfigFromUi());
+    }
 
     function playAlarmBeep() {
       try {
@@ -167,7 +361,7 @@
 
         setTimeout(() => ctx.close().catch(()=>{}), 700);
       } catch (e) {
-        // als audio geblokkeerd wordt door browser policies, dan niks
+        // no-op if browser policies block audio
       }
     }
 
@@ -186,24 +380,64 @@
 
     function showAlarmBanner(message) {
       const b = document.getElementById('alarmBanner');
-      b.textContent = '🚨 ' + message;
+      b.textContent = 'ðŸš¨ ' + message;
       b.classList.add('show');
       setTimeout(() => b.classList.remove('show'), 15000);
     }
 
     socket.on('update-stats', s => {
+      const setStateClass = (el, pct) => {
+        el.classList.remove('stat-good', 'stat-warn', 'stat-bad');
+        if (pct < 30) el.classList.add('stat-bad');
+        else if (pct < 60) el.classList.add('stat-warn');
+        else el.classList.add('stat-good');
+      };
+      const setTextClass = (el, pct) => {
+        el.classList.remove('pct-good', 'pct-warn', 'pct-bad');
+        if (pct < 30) el.classList.add('pct-bad');
+        else if (pct < 60) el.classList.add('pct-warn');
+        else el.classList.add('pct-good');
+      };
+
+      document.getElementById('username').innerText = s.username || '-';
+      if (Number(s.stats_updated_at) > 0) {
+        lastStatsSeenAt = Number(s.stats_updated_at);
+      }
+      document.getElementById('level').innerText = Number(s.level || 0).toLocaleString();
       document.getElementById('gold').innerText = Number(s.gold).toLocaleString();
-      document.getElementById('xp').innerText = s.xp?.toLocaleString() || '0';
-      document.getElementById('steps').innerText = s.steps;
-      document.getElementById('items').innerText = s.items || 0;
+      document.getElementById('bank').innerText = Number(s.bank || 0).toLocaleString();
+      document.getElementById('diamonds').innerText = Number(s.diamonds || 0).toLocaleString();
+      document.getElementById('totalSteps').innerText = Number(s.total_steps || 0).toLocaleString();
+      document.getElementById('xp').innerText = Number(s.xp_remaining || s.xp || 0).toLocaleString();
+      document.getElementById('qp').innerText = `${Number(s.qp || 0).toLocaleString()}/${Number(s.max_qp || 0).toLocaleString()}`;
+      document.getElementById('hp').innerText = `${Number(s.current_hp || 0).toLocaleString()}/${Number(s.max_hp || 0).toLocaleString()}`;
+
+      const xpProgress = Math.max(0, Math.min(100, Number(s.xp_progress || 0)));
+      const hpProgress = Math.max(0, Math.min(100, Number(s.hp_percent || 0)));
+      const qpProgress = Math.max(0, Math.min(100, Number(s.qp_percent || 0)));
+      document.getElementById('xpProgress').style.width = `${xpProgress}%`;
+      document.getElementById('hpProgress').style.width = `${hpProgress}%`;
+      document.getElementById('qpProgress').style.width = `${qpProgress}%`;
+      const xpText = document.getElementById('xpProgressText');
+      const hpText = document.getElementById('hpProgressText');
+      const qpText = document.getElementById('qpProgressText');
+      xpText.innerText = `${Math.round(xpProgress)}%`;
+      hpText.innerText = `${Math.round(hpProgress)}%`;
+      qpText.innerText = `${Math.round(qpProgress)}%`;
+      setTextClass(xpText, xpProgress);
+      setTextClass(hpText, hpProgress);
+      setTextClass(qpText, qpProgress);
+
+      setStateClass(document.getElementById('hp').closest('.stat-item'), hpProgress);
+      setStateClass(document.getElementById('qp').closest('.stat-item'), qpProgress);
     });
 
     socket.on('bot-log', msg => {
       const log = document.getElementById('log');
       const div = document.createElement('div');
       div.className = 'log-line';
-      if (msg.includes('💰') || msg.includes('goud')) div.classList.add('msg-gold');
-      if (msg.includes('⚠️') || msg.includes('CAPTCHA') || msg.includes('anti-bot')) div.classList.add('msg-error');
+      if (msg.includes('ðŸ’°') || msg.includes('goud')) div.classList.add('msg-gold');
+      if (msg.includes('âš ï¸') || msg.includes('CAPTCHA') || msg.includes('anti-bot')) div.classList.add('msg-error');
       div.textContent = new Date().toLocaleTimeString() + '  ' + msg;
       log.prepend(div);
       if (log.children.length > 60) log.lastElementChild.remove();
@@ -223,6 +457,10 @@
       document.getElementById('btn-browser').textContent = 'Browser open';
     });
 
+    socket.on('browser-window-config', (cfg) => {
+      applyWindowConfigToUi(cfg || {});
+    });
+
     socket.on('status', running => {
       isRunning = !!running;
       const btn = document.getElementById('btn-toggle');
@@ -233,18 +471,35 @@
       status.style.color = running ? 'var(--green)' : 'var(--red)';
     });
 
-    // ✅ ALARM event
+    // âœ… ALARM event
     socket.on('alarm', payload => {
       const message = payload?.message || 'Alarm!';
       showAlarmBanner(message);
       playAlarmBeep();
-      flashTitle('🚨 CAPTCHA!', 10, 300);
+      flashTitle('ðŸš¨ CAPTCHA!', 10, 300);
 
-      // optioneel: popup alert (kan irritant zijn, maar jij vroeg “echt alarm”)
+      // optioneel: popup alert (kan irritant zijn, maar jij vroeg â€œecht alarmâ€)
       alert('ALARM: ' + message);
     });
 
-    document.getElementById('btn-browser').onclick = () => socket.emit('start-browser');
+    document.getElementById('browserMode').onchange = () => {
+      applyWindowConfigToUi(readWindowConfigFromUi());
+    };
+    document.getElementById('browserWidth').oninput = () => {
+      document.getElementById('browserMode').value = 'windowed';
+    };
+    document.getElementById('browserHeight').oninput = () => {
+      document.getElementById('browserMode').value = 'windowed';
+    };
+
+    document.getElementById('btn-apply-window').onclick = () => {
+      sendWindowConfig();
+    };
+
+    document.getElementById('btn-browser').onclick = () => {
+      sendWindowConfig();
+      socket.emit('start-browser');
+    };
 
     document.getElementById('btn-toggle').onclick = () => {
       if (isRunning) {
@@ -260,3 +515,4 @@
   </script>
 </body>
 </html>
+

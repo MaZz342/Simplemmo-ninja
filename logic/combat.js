@@ -46,7 +46,7 @@ async function handleCombat(page, socket, sessionStats) {
       sessionStats.items = (sessionStats.items || 0) + 1;
       socket.emit('new-loot', `Loot: ${textRaw}`);
       socket.emit('update-stats', sessionStats);
-      socket.emit('bot-log', `Loot gepakt: ${textRaw}`);
+      socket.emit('bot-log', `Loot collected: ${textRaw}`);
       return humanDelay('close', 900, 1600, { quick: true });
     }
 
@@ -67,7 +67,7 @@ async function handleCombat(page, socket, sessionStats) {
       if (!(await isClickable(el))) continue;
 
       await clickSoft(el);
-      socket.emit('bot-log', '✅ Combat: confirm/ok geklikt');
+      socket.emit('bot-log', '✅ Combat: confirm/ok clicked');
       return humanDelay('combat', 900, 1800, { afterCombat: true });
     }
 
@@ -81,7 +81,7 @@ async function handleCombat(page, socket, sessionStats) {
       if (!(await isClickable(el))) continue;
 
       await clickSoft(el);
-      socket.emit('bot-log', '⚔️ Combat: attack geklikt');
+      socket.emit('bot-log', '⚔️ Combat: attack clicked');
 
       return likelyCombat
         ? humanDelay('combat', 1200, 2600, { afterCombat: true })

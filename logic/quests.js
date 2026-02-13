@@ -30,14 +30,14 @@ async function handleQuests(page, socket) {
       await sleep(150 + Math.random() * 250);
 
       await el.click({ delay: 60 + Math.random() * 110, timeout: 15000 });
-      socket.emit('bot-log', '✅ Quest uitgevoerd (Perform)');
+      socket.emit('bot-log', '✅ Quest completed (Perform)');
       return 1800 + Math.random() * 800;
     }
 
     return 0;
   } catch (err) {
     console.error('[quests] Fout:', err.message);
-    socket.emit('bot-log', `Quest fout: ${err.message}`);
+    socket.emit('bot-log', `Quest error: ${err.message}`);
     return 2500;
   }
 }

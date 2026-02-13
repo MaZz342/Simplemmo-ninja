@@ -7,13 +7,14 @@ const { humanDelay } = require('./human-delay');
 let lastOpenAt = 0;
 let awaitingPopupUntil = 0;
 let resourceCooldownUntil = 0;
+const seenLootKeys = new Set();
 
 async function safeGoto(page, url, socket) {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     return true;
   } catch (e) {
-    socket?.emit('bot-log', `⚠️ goto faalde (${url}): ${e.message}`);
+    socket?.emit('bot-log', `⚠️ goto failed (${url}): ${e.message}`);
     return false;
   }
 }
@@ -88,7 +89,7 @@ async function closePopupByX(page, socket) {
   }).catch(() => ({ ok: false }));
 
   if (clicked && clicked.ok) {
-    socket.emit('bot-log', `❎ Popup gesloten (X) [${clicked.tag || 'clicked'}]`);
+    socket.emit('bot-log', `❎ Popup closed (X) [${clicked.tag || 'clicked'}]`);
     await sleep(humanDelay('close', 160, 320));
     return true;
   }
@@ -139,9 +140,9 @@ async function clickGatherPopupButton(page, socket) {
     // cooldown 12-18 sec, maar adaptief: soms iets langer
     const cd = humanDelay('resource', 12000, 18000, { afterResource: true });
     resourceCooldownUntil = Date.now() + cd;
-    socket.emit('bot-log', `⏳ Resource cooldown ${(cd / 1000).toFixed(0)}s → focus op steps`);
+    socket.emit('bot-log', `⏳ Resource cooldown ${(cd / 1000).toFixed(0)}s -> focusing steps`);
   } else {
-    socket.emit('bot-log', '⚠️ X niet kunnen sluiten (nog open?)');
+    socket.emit('bot-log', '⚠️ Could not close X (still open?)');
   }
 
   return true;
@@ -156,8 +157,102 @@ async function waitAndClickPopup(page, socket, timeoutMs = 1800) {
   return await clickGatherPopupButton(page, socket);
 }
 
+async function extractLootEntries(page) {
+  return await page.evaluate(() => {
+    const toAbsoluteIconSrc = (raw) => {
+      if (!raw) return '';
+      if (/^https?:\/\//i.test(raw)) return raw;
+      if (raw.startsWith('//')) return `https:${raw}`;
+      return `https://web.simple-mmo.com${raw.startsWith('/') ? '' : '/'}${raw}`;
+    };
+
+    const findIconNearSpan = (span) => {
+      const tryImgs = [];
+
+      const prev = span.previousElementSibling;
+      if (prev && (prev.tagName || '').toLowerCase() === 'img') tryImgs.push(prev);
+
+      const parent = span.parentElement;
+      if (parent) {
+        const parentImg = parent.querySelector('img[src], img[data-src]');
+        if (parentImg) tryImgs.push(parentImg);
+      }
+
+      let cur = span.parentElement;
+      let depth = 0;
+      while (cur && depth < 4) {
+        const near = cur.querySelector('img[src*="/img/icons/"], img[data-src*="/img/icons/"], img[src], img[data-src]');
+        if (near) tryImgs.push(near);
+        cur = cur.parentElement;
+        depth++;
+      }
+
+      for (const img of tryImgs) {
+        if (!img) continue;
+        const rawSrc = img.getAttribute('src') || img.getAttribute('data-src') || '';
+        const src = toAbsoluteIconSrc(rawSrc);
+        if (!src) continue;
+        const cls = img.getAttribute('class') || 'inline-block';
+        return `<img src="${src}" class="${cls}">`;
+      }
+      return '';
+    };
+
+    const nodes = Array.from(document.querySelectorAll('[onclick*="retrieveItem("]'));
+    return nodes.slice(0, 12).map((span) => {
+      const onclick = span.getAttribute('onclick') || '';
+      const idMatch = onclick.match(/retrieveItem\((\d+),\s*["']([^"']+)["']\)/i);
+      // Use stable key: item id + visible text.
+      // The 2nd retrieveItem token often changes between polls and causes duplicate spam.
+      const text = (span.textContent || '').trim();
+      const key = idMatch ? `${idMatch[1]}:${text}` : (span.id || text);
+      const iconHtml = findIconNearSpan(span);
+
+      const spanClone = span.cloneNode(true);
+      spanClone.removeAttribute('onclick');
+      const spanHtml = spanClone.outerHTML;
+      const html = `${iconHtml} ${spanHtml}`.trim();
+      return { key, text, html };
+    }).filter((x) => x && x.key);
+  }).catch(() => []);
+}
+
+function rememberLootKey(key) {
+  if (!key) return false;
+  if (seenLootKeys.has(key)) return false;
+  seenLootKeys.add(key);
+  if (seenLootKeys.size > 500) {
+    const first = seenLootKeys.values().next().value;
+    if (first) seenLootKeys.delete(first);
+  }
+  return true;
+}
+
+async function scanAndEmitLoot(page, socket, sessionStats, source = 'scan') {
+  const lootRows = await extractLootEntries(page);
+  if (!lootRows.length) return 0;
+  const withIcon = lootRows.filter((r) => (r.html || '').includes('<img')).length;
+
+  let emitted = 0;
+  for (const row of lootRows) {
+    if (!rememberLootKey(row.key)) continue;
+    socket.emit('new-loot', row.html || row.text || 'Loot');
+    emitted++;
+  }
+
+  if (emitted > 0) {
+    socket.emit('bot-log', `Loot raw (${source}): ${lootRows.length} item(s), ${withIcon} with icon`);
+    sessionStats.items = (sessionStats.items || 0) + emitted;
+    socket.emit('update-stats', sessionStats);
+    socket.emit('bot-log', `Loot scan (${source}): ${emitted} new item(s)`);
+  }
+
+  return emitted;
+}
+
 async function handleTravel(page, settings, sessionStats, socket) {
   if (await checkCaptcha(page)) return { type: 'captcha' };
+  await scanAndEmitLoot(page, socket, sessionStats, 'pre-loop');
 
   const now = Date.now();
 
@@ -191,7 +286,7 @@ async function handleTravel(page, settings, sessionStats, socket) {
 
   if (!url.includes('/travel') && !isActionBusy) {
     if (!url.includes('/combat') && !url.includes('/job/') && !url.includes('/crafting/')) {
-      socket.emit('bot-log', 'Niet op travel → herstellen naar /travel');
+      socket.emit('bot-log', 'Not on travel -> recovering to /travel');
       await safeGoto(page, 'https://web.simple-mmo.com/travel?new_page=true', socket);
       return humanDelay('close', 1400, 2400, { afterNav: true });
     }
@@ -206,6 +301,43 @@ async function handleTravel(page, settings, sessionStats, socket) {
 
   // cooldown actief? dan alleen close/confirm/step
   const cooldownActive = now < resourceCooldownUntil;
+
+  // Als skill te laag is voor current resource, skip resource-open clicks tijdelijk.
+  const lowSkillBlocked = await page.evaluate(() => {
+    const text = (document.body?.innerText || '').toLowerCase();
+    return (
+      text.includes("your skill level isn't high enough") ||
+      text.includes("your skill level isnt high enough")
+    );
+  }).catch(() => false);
+
+  if (lowSkillBlocked) {
+    const cd = humanDelay('resource', 18000, 30000, { quick: true });
+    resourceCooldownUntil = Date.now() + cd;
+    const didStep = await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
+      const vis = (b) => b && b.offsetParent !== null && !b.disabled;
+      const txt = (b) => (b.innerText || b.textContent || '').trim().toLowerCase();
+      const stp = btns.find((b) => vis(b) && txt(b).includes('take a step'));
+      if (!stp) return false;
+
+      const rect = stp.getBoundingClientRect();
+      const x = rect.left + (Math.random() * rect.width);
+      const y = rect.top + (Math.random() * rect.height);
+      stp.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+      return true;
+    }).catch(() => false);
+
+    if (didStep) {
+      sessionStats.steps = (sessionStats.steps || 0) + 1;
+      socket.emit('bot-log', `Resource skipped: skill level too low (${Math.round(cd / 1000)}s cooldown), stepped anyway`);
+      socket.emit('update-stats', sessionStats);
+      return humanDelay('step', 2200, 3800, { quick: true });
+    }
+
+    socket.emit('bot-log', `Resource skipped: skill level too low (${Math.round(cd / 1000)}s cooldown), no step button found`);
+    return humanDelay('step', 1800, 3200, { quick: true });
+  }
 
   const result = await page.evaluate((cfg) => {
     const clickHumanly = (el) => {
@@ -257,7 +389,7 @@ async function handleTravel(page, settings, sessionStats, socket) {
   if (result.type === 'opening') {
     lastOpenAt = Date.now();
     awaitingPopupUntil = Date.now() + 3500;
-    socket.emit('bot-log', `Interactie openen: ${result.name} (popup volgt)`);
+    socket.emit('bot-log', `Opening interaction: ${result.name} (waiting for popup)`);
 
     const did = await waitAndClickPopup(page, socket, 1600);
     if (did) {
@@ -269,29 +401,29 @@ async function handleTravel(page, settings, sessionStats, socket) {
   }
 
   if (result.type === 'executing') {
-    socket.emit('bot-log', `Bevestigen: ${result.name}`);
+    socket.emit('bot-log', `Confirming: ${result.name}`);
     return humanDelay('combat', 1400, 2500, { afterCombat: true });
   }
 
   if (result.type === 'close') {
-    socket.emit('bot-log', `Afsluiten: ${result.name}`);
+    socket.emit('bot-log', `Closing: ${result.name}`);
     if (/collect loot/i.test(result.name || '')) {
-      sessionStats.items = (sessionStats.items || 0) + 1;
-      socket.emit('new-loot', `Loot: ${result.name}`);
-      socket.emit('update-stats', sessionStats);
+      await sleep(300);
+      const emitted = await scanAndEmitLoot(page, socket, sessionStats, 'collect');
+      if (emitted === 0) socket.emit('bot-log', 'Loot scan (collect): no new items found');
     }
     return humanDelay('close', 1000, 1800);
   }
 
   if (result.type === 'step') {
     sessionStats.steps = (sessionStats.steps || 0) + 1;
-    socket.emit('bot-log', `Stap ${sessionStats.steps} gezet`);
+    socket.emit('bot-log', `Step ${sessionStats.steps} taken`);
     socket.emit('update-stats', sessionStats);
     return humanDelay('step', 3400, 5800);
   }
 
   if (result.type === 'eval_error') {
-    socket.emit('bot-log', `⚠️ Travel evaluate onderbroken: ${result.name}`);
+    socket.emit('bot-log', `⚠️ Travel evaluate interrupted: ${result.name}`);
     return humanDelay('close', 900, 1600, { afterNav: true, quick: true });
   }
 

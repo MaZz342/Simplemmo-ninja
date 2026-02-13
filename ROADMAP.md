@@ -15,7 +15,7 @@
 10. [x] Profielen toegevoegd (`safe`, `balanced`, `fast-human`).
 
 ## Leuk Daarna (Next Level)
-1. Slimme battle target chooser op basis van level/stats.
+1. [x] Slimme battle target chooser op basis van level/stats.
 2. Session recorder met export (json/csv) van performance data.
 3. Replay/debug mode met laatste 50 acties en URL's.
 4. Cooldown planner tussen travel/quest/battle/resource.

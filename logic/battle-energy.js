@@ -17,7 +17,8 @@ const state = {
   generateMisses: 0,
   fightMisses: 0,
   lastArenaRecoverAt: 0,
-  lastBattleContextSeenAt: 0
+  lastBattleContextSeenAt: 0,
+  targetRerolls: 0
 };
 
 function resetPhaseState(nextPhase = PHASE.MENU) {
@@ -26,6 +27,7 @@ function resetPhaseState(nextPhase = PHASE.MENU) {
   state.fightMisses = 0;
   if (nextPhase === PHASE.MENU) {
     state.lastBattleContextSeenAt = 0;
+    state.targetRerolls = 0;
   }
 }
 
@@ -189,6 +191,95 @@ async function findQuickGenerateHandle(page) {
     if (ok) return h;
   }
   return null;
+}
+
+async function findGenerateAnotherNpcHandle(page) {
+  const handles = await page.$$('button, a, [role="button"], .btn');
+  for (const h of handles) {
+    const ok = await h.evaluate((el) => {
+      if (!el || el.disabled) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+      return txt.includes('generate another npc');
+    }).catch(() => false);
+    if (ok) return h;
+  }
+  return null;
+}
+
+async function readNpcPreviewStats(page) {
+  return await page.evaluate(() => {
+    const toNum = (value) => {
+      const m = String(value || '').match(/-?\d+/);
+      return m ? Number(m[0]) : null;
+    };
+    const isVisible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const all = Array.from(document.querySelectorAll('div, section, article')).filter((el) => isVisible(el));
+    const container = all.find((el) => {
+      const txt = (el.innerText || '').toLowerCase();
+      return txt.includes('generate another npc') && txt.includes('level');
+    });
+    if (!container) return { found: false };
+
+    const text = (container.innerText || '').replace(/\s+/g, ' ').trim();
+    const levelMatch = text.match(/\blevel\s+(\d+)\b/i);
+    const lines = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    let strength = null;
+    let defence = null;
+    let health = null;
+    for (let i = 0; i < lines.length; i++) {
+      const cur = lines[i].toLowerCase();
+      const next = i + 1 < lines.length ? lines[i + 1] : '';
+      if (cur.includes('strength') && strength === null) strength = toNum(next || cur);
+      if (cur.includes('defence') && defence === null) defence = toNum(next || cur);
+      if (cur.includes('health') && health === null) health = toNum(next || cur);
+    }
+
+    const firstLine = lines[0] || '';
+    return {
+      found: true,
+      name: firstLine && !/level/i.test(firstLine) ? firstLine : '',
+      level: levelMatch ? Number(levelMatch[1]) : null,
+      strength,
+      defence,
+      health
+    };
+  }).catch(() => ({ found: false }));
+}
+
+function shouldRerollNpc(sessionStats, npc) {
+  if (!npc || !npc.found) return { reroll: false, reason: 'no-preview' };
+  if (state.targetRerolls >= 5) return { reroll: false, reason: 'reroll-cap' };
+
+  const playerLevel = Number(sessionStats?.level || 0);
+  const playerHp = Number(sessionStats?.current_hp || 0);
+  const playerStr = Number(sessionStats?.strength || 0);
+  const playerDef = Number(sessionStats?.defence || 0);
+
+  if (npc.level && playerLevel > 0 && npc.level > (playerLevel + 12)) {
+    return { reroll: true, reason: `level ${npc.level} > ${playerLevel + 12}` };
+  }
+  if (npc.health && playerHp > 0 && npc.health > (playerHp * 1.45)) {
+    return { reroll: true, reason: `health ${npc.health} > ${Math.round(playerHp * 1.45)}` };
+  }
+  if (npc.defence && playerStr > 0 && npc.defence > (playerStr * 2.2)) {
+    return { reroll: true, reason: `defence ${npc.defence} > ${Math.round(playerStr * 2.2)}` };
+  }
+  if (npc.strength && playerDef > 0 && npc.strength > (playerDef * 1.9) && playerHp > 0) {
+    return { reroll: true, reason: `strength ${npc.strength} > ${Math.round(playerDef * 1.9)}` };
+  }
+
+  return { reroll: false, reason: 'acceptable' };
 }
 
 async function findContinueHandle(page) {
@@ -584,11 +675,31 @@ async function handleBattleEnergy(page, socket, sessionStats) {
       return humanDelay('combat', 2200, 3600, { afterCombat: true });
     }
 
+    const npcPreview = await readNpcPreviewStats(page);
+    if (npcPreview.found) {
+      const decision = shouldRerollNpc(sessionStats, npcPreview);
+      if (decision.reroll) {
+        const rerollBtn = await findGenerateAnotherNpcHandle(page) || await findQuickGenerateHandle(page);
+        if (rerollBtn && await clickHandleRobust(rerollBtn)) {
+          state.targetRerolls += 1;
+          socket?.emit(
+            'bot-log',
+            `Battle target chooser: reroll NPC (${decision.reason}) [${state.targetRerolls}/5]`
+          );
+          return humanDelay('combat', 2200, 3600, { afterCombat: true });
+        }
+      } else if (state.targetRerolls > 0) {
+        socket?.emit('bot-log', `Battle target chooser: taking NPC after rerolls (${state.targetRerolls})`);
+        state.targetRerolls = 0;
+      }
+    }
+
     const battleBtn = await findBattleEnterHandle(page);
     if (battleBtn && await clickHandleRobust(battleBtn)) {
       state.fightMisses = 0;
       resetPhaseState(PHASE.FIGHT);
       state.lastBattleContextSeenAt = Date.now();
+      state.targetRerolls = 0;
       socket?.emit('bot-log', 'Battle burst: Battle clicked');
       return humanDelay('combat', 2400, 3800, { afterCombat: true });
     }

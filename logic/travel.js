@@ -3,6 +3,7 @@
 const { checkCaptcha } = require('./captcha');
 const { humanDelay } = require('./human-delay');
 const { clickHandle } = require('./click-utils');
+const { detectAntiFastWarning, markFastWarning, tuneDelay } = require('./anti-fast');
 
 // mini-state
 let lastOpenAt = 0;
@@ -298,6 +299,12 @@ async function scanAndEmitLoot(page, socket, sessionStats, source = 'scan') {
 async function handleTravel(page, settings, sessionStats, socket) {
   if (await checkCaptcha(page)) return { type: 'captcha' };
   await scanAndEmitLoot(page, socket, sessionStats, 'pre-loop');
+
+  const antiFastWarning = await detectAntiFastWarning(page);
+  if (antiFastWarning) {
+    markFastWarning('gather', socket, 'travel warning detected');
+    return tuneDelay('gather', humanDelay('resource', 7000, 12000, { afterResource: true }), { floorMs: 7000 });
+  }
 
   const now = Date.now();
 

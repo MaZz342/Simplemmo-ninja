@@ -7,12 +7,12 @@
 2b. [x] Resterende travel-click paden naar `clickHandle`-flow gebracht (`logic/travel.js`).
 3. [x] Settings persistence in UI (`public/index.html`, localStorage).
 4. [x] `browser.js` opgesplitst in modules (launch, stats, quest-live).
-5. Structured bot-logging met duidelijke event types en context.
-6. Battle analytics tab in dashboard (wins/losses, energy, misses).
-7. Adaptive anti-fast mode per flow (combat/gather/battle).
-8. Dead code opruimen of integreren (`logic/gathering.js`, `logic/api.js`).
-9. Basale smoke-tests toevoegen onder `tests/`.
-10. Profielen toevoegen (`safe`, `balanced`, `fast-human`).
+5. [x] Structured bot-logging met duidelijke event types en context.
+6. [x] Battle analytics tab in dashboard (wins/losses, energy, misses).
+7. [x] Adaptive anti-fast mode per flow (combat/gather/battle).
+8. [x] Dead code opgeruimd/geintegreerd (`logic/gathering.js`, `logic/api.js` verwijderd; flow zit in `logic/travel.js` + `logic/browser/*`).
+9. [x] Basale smoke-tests toegevoegd onder `tests/`.
+10. [x] Profielen toegevoegd (`safe`, `balanced`, `fast-human`).
 
 ## Leuk Daarna (Next Level)
 1. Slimme battle target chooser op basis van level/stats.

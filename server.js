@@ -6,6 +6,7 @@ const { Server } = require('socket.io');
 
 const { startBrowser, closeBrowser, getPage, setBrowserWindowConfig, getBrowserWindowConfig } = require('./browser');
 const botModule = require('./logic/bot-logic');
+const { installBotLogBridge, emitBotLogToIo } = require('./logic/bot-log');
 
 const startLoop = botModule.startLoop || botModule.startBotLoop;
 const stopLoop = botModule.stopLoop || botModule.stopBotLoop || (() => {});
@@ -116,7 +117,7 @@ async function cleanupRuntime(reason, socket, opts = {}) {
         socket.emit('bot-log', reason);
       } else {
         io.emit('status', false);
-        io.emit('bot-log', reason);
+        emitBotLogToIo(io, reason, { flow: 'core', action: 'stop' });
       }
 
       const skipBrowserClose = !!opts.skipBrowserClose;
@@ -124,7 +125,7 @@ async function cleanupRuntime(reason, socket, opts = {}) {
         if (socket) {
           socket.emit('bot-log', 'Browser remains open for manual captcha solving');
         } else {
-          io.emit('bot-log', 'Browser remains open for manual captcha solving');
+          emitBotLogToIo(io, 'Browser remains open for manual captcha solving', { flow: 'browser', action: 'wait' });
         }
       } else {
         await closeBrowser(socket);
@@ -140,6 +141,7 @@ async function cleanupRuntime(reason, socket, opts = {}) {
 }
 
 io.on('connection', (socket) => {
+  installBotLogBridge(socket);
   console.log('Dashboard connected');
   let lastStatus = null;
 

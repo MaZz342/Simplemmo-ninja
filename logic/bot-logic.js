@@ -14,6 +14,8 @@ const { handleTravel } = require('./travel');
 const { handleCombat } = require('./combat');
 const { handleQuests } = require('./quests');
 const { handleBattleEnergy, shouldRunBattleBurst } = require('./battle-energy');
+const { tuneDelay, markFlowProgress, setAntiFastProfile } = require('./anti-fast');
+const { setDelayProfile } = require('./human-delay');
 
 function getQuestPointState(stats) {
   const qp = Number(stats?.qp ?? stats?.quest_points ?? 0);
@@ -54,6 +56,28 @@ function shouldRunQuestBurst(stats, socket) {
   return false;
 }
 
+function isTargetClosedError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('target closed') ||
+    msg.includes('protocol error') && msg.includes('target') && msg.includes('closed') ||
+    msg.includes('execution context was destroyed') ||
+    msg.includes('session closed')
+  );
+}
+
+function isPageUsable(page) {
+  try {
+    if (!page) return false;
+    if (typeof page.isClosed === 'function' && page.isClosed()) return false;
+    const browser = typeof page.browser === 'function' ? page.browser() : null;
+    if (browser && typeof browser.isConnected === 'function' && !browser.isConnected()) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function startBotLoop(socket, page, settings, sessionStats) {
   if (isRunning) {
     socket.emit('bot-log', 'Bot is already running - no new start');
@@ -62,11 +86,14 @@ function startBotLoop(socket, page, settings, sessionStats) {
   }
 
   isRunning = true;
+  const selectedProfile = setDelayProfile(settings?.delayProfile || settings?.profile || 'balanced');
+  setAntiFastProfile(selectedProfile);
   captchaPauseActive = false;
   questBurstActive = false;
   battleBurstActive = false;
   lastQuestWaitLogAt = 0;
   lastBattleWaitLogAt = 0;
+  socket.emit('bot-log', `Delay profile active: ${selectedProfile}`);
   socket.emit('bot-log', 'Bot loop started - step mode active');
   console.log('[BOT] startBotLoop aangeroepen');
 
@@ -74,6 +101,13 @@ function startBotLoop(socket, page, settings, sessionStats) {
     if (!isRunning) return;
 
     try {
+      if (!isPageUsable(page)) {
+        socket.emit('bot-log', 'Browser/page target is closed -> bot loop stopped');
+        stopBotLoop();
+        socket.emit('status', false);
+        return;
+      }
+
       const stats = sessionStats || { steps: 0, items: 0 };
 
       if (await checkCaptcha(page)) {
@@ -107,6 +141,8 @@ function startBotLoop(socket, page, settings, sessionStats) {
         if (battleBurstActive) {
           delay = await handleBattleEnergy(page, socket, stats);
           if (delay > 0) {
+            markFlowProgress('battle');
+            delay = tuneDelay('battle', delay, { floorMs: MIN_LOOP_DELAY_MS });
             delay = Math.max(MIN_LOOP_DELAY_MS, Math.round(delay));
             loopTimeout = setTimeout(runLoop, delay);
             return;
@@ -117,6 +153,8 @@ function startBotLoop(socket, page, settings, sessionStats) {
       if (s.combat) {
         delay = await handleCombat(page, socket, stats);
         if (delay > 0) {
+          markFlowProgress('combat');
+          delay = tuneDelay('combat', delay, { floorMs: MIN_LOOP_DELAY_MS });
           delay = Math.max(MIN_LOOP_DELAY_MS, Math.round(delay));
           loopTimeout = setTimeout(runLoop, delay);
           return;
@@ -137,11 +175,19 @@ function startBotLoop(socket, page, settings, sessionStats) {
 
       delay = await handleTravel(page, s, stats, socket);
       if (!(delay > 0)) delay = 6000 + Math.random() * 3000;
+      markFlowProgress('gather');
+      delay = tuneDelay('gather', delay, { floorMs: MIN_LOOP_DELAY_MS });
       delay = Math.max(MIN_LOOP_DELAY_MS, Math.round(delay));
 
       loopTimeout = setTimeout(runLoop, delay);
     } catch (err) {
       console.error('[BOT LOOP FOUT]', err.message, err.stack);
+      if (isTargetClosedError(err)) {
+        socket.emit('bot-log', 'Browser target closed -> stopping bot loop (open browser again)');
+        stopBotLoop();
+        socket.emit('status', false);
+        return;
+      }
       socket.emit('bot-log', 'Loop error: ' + err.message);
       loopTimeout = setTimeout(runLoop, 10000);
     }

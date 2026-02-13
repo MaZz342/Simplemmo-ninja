@@ -2,6 +2,7 @@
 
 const { humanDelay } = require('./human-delay');
 const { clickHandle } = require('./click-utils');
+const { detectAntiFastWarning, markFastWarning, tuneDelay } = require('./anti-fast');
 
 const PHASE = {
   MENU: 'menu',
@@ -511,6 +512,12 @@ function isBattleContextUrl(url) {
 
 async function handleBattleEnergy(page, socket, sessionStats) {
   try {
+    const antiFastWarning = await detectAntiFastWarning(page);
+    if (antiFastWarning) {
+      markFastWarning('battle', socket, 'battle warning detected');
+      return tuneDelay('battle', humanDelay('combat', 7000, 12000, { afterCombat: true }), { floorMs: 7000 });
+    }
+
     const now = Date.now();
     const currentUrl = page.url();
     const inBattleContext = isBattleContextUrl(currentUrl);

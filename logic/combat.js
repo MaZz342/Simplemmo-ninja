@@ -2,6 +2,7 @@
 
 const { humanDelay } = require('./human-delay');
 const { clickHandle, scrollIntoView } = require('./click-utils');
+const { markFastWarning, tuneDelay } = require('./anti-fast');
 
 let lastAttackClickAt = 0;
 const MIN_ATTACK_INTERVAL_MS = 5200;
@@ -27,7 +28,8 @@ async function handleCombat(page, socket, sessionStats) {
     }).catch(() => false);
     if (antiFastWarning) {
       socket.emit('bot-log', 'Combat throttle: anti-fast warning detected, backing off');
-      return humanDelay('combat', 7000, 12000, { afterCombat: true });
+      markFastWarning('combat', socket, 'warning detected');
+      return tuneDelay('combat', humanDelay('combat', 7000, 12000, { afterCombat: true }), { floorMs: 7000 });
     }
 
     const elements = await page.$$('button, a, [role="button"], .btn');
@@ -98,7 +100,7 @@ async function handleCombat(page, socket, sessionStats) {
       if (sinceLastAttack < MIN_ATTACK_INTERVAL_MS) {
         const waitMs = (MIN_ATTACK_INTERVAL_MS - sinceLastAttack) + Math.round(Math.random() * 900);
         socket.emit('bot-log', `Combat throttle: waiting ${Math.round(waitMs / 1000)}s before next attack`);
-        return waitMs;
+        return tuneDelay('combat', waitMs, { floorMs: 1800 });
       }
 
       await clickSoft(el);

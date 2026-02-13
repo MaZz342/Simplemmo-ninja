@@ -9,6 +9,14 @@ let state = {
   lastDistractionAt: 0
 };
 
+const DELAY_PROFILES = {
+  safe: { mult: 1.22, distractionBoost: 0.01 },
+  balanced: { mult: 1.0, distractionBoost: 0 },
+  'fast-human': { mult: 0.88, distractionBoost: -0.005 }
+};
+
+let activeProfile = 'balanced';
+
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
@@ -26,6 +34,16 @@ function softSkew(min, max) {
 
 function should(p) {
   return Math.random() < p;
+}
+
+function getProfile() {
+  return DELAY_PROFILES[activeProfile] ? activeProfile : 'balanced';
+}
+
+function setDelayProfile(profileName) {
+  const next = String(profileName || '').toLowerCase();
+  activeProfile = DELAY_PROFILES[next] ? next : 'balanced';
+  return activeProfile;
 }
 
 function updateState(type) {
@@ -71,6 +89,8 @@ function humanDelay(type, baseMin, baseMax, opts = {}) {
 
   // basis delay
   let delay = softSkew(baseMin, baseMax);
+  const profile = DELAY_PROFILES[getProfile()] || DELAY_PROFILES.balanced;
+  delay *= profile.mult;
 
   // tempo-variatie: meestal normaal, soms sneller of juist trager
   const paceRoll = Math.random();
@@ -104,11 +124,13 @@ function humanDelay(type, baseMin, baseMax, opts = {}) {
   if (opts.quick) delay *= 0.90;
 
   // micro-pause: heel klein menselijk “twijfel”-moment
-  if (should(0.32)) delay += rand(90, 520);
+  if (should(clamp(0.32 + profile.distractionBoost, 0.08, 0.5))) delay += rand(90, 520);
 
   // afleiding: zelden, maar wel echt (niet te vaak)
   const canDistract = (now - state.lastDistractionAt) > 90000; // max 1x per 90s
-  if (canDistract && should(type === 'step' ? 0.045 : 0.035)) {
+  const distractBase = type === 'step' ? 0.045 : 0.035;
+  const distractChance = clamp(distractBase + profile.distractionBoost, 0.005, 0.09);
+  if (canDistract && should(distractChance)) {
     const extra = rand(4000, 12000);
     delay += extra;
     state.lastDistractionAt = now;
@@ -120,4 +142,8 @@ function humanDelay(type, baseMin, baseMax, opts = {}) {
   return Math.round(delay);
 }
 
-module.exports = { humanDelay };
+module.exports = {
+  humanDelay,
+  setDelayProfile,
+  getDelayProfile: getProfile
+};

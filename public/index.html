@@ -371,6 +371,14 @@
       </div>
       <button id="btn-apply-window" class="btn btn-start">Apply Browser Size</button>
       <hr style="border-color:var(--border);margin:6px 0;">
+      <div class="field">
+        <label for="delayProfile">Bot profile</label>
+        <select id="delayProfile">
+          <option value="safe">Safe</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="fast-human">Fast-human</option>
+        </select>
+      </div>
       <label><input type="checkbox" id="combat" checked> Combat</label>
       <label><input type="checkbox" id="quests" checked> Quests</label>
       <label><input type="checkbox" id="battleEnergy"> Battle (full energy burst)</label>
@@ -429,6 +437,7 @@
           <button id="tab-activity" class="panel-tab active" type="button">Activity</button>
           <button id="tab-drops" class="panel-tab" type="button">Drops</button>
           <button id="tab-quests" class="panel-tab" type="button">Quest Live</button>
+          <button id="tab-battle" class="panel-tab" type="button">Battle Analytics</button>
         </div>
 
         <div id="panel-activity" class="panel-view active">
@@ -454,6 +463,30 @@
             <div id="questLiveRows"></div>
           </div>
         </div>
+
+        <div id="panel-battle" class="panel-view">
+          <div class="log-title">Battle Analytics <span style="color:var(--green)">LIVE</span></div>
+          <div class="window">
+            <div class="quest-live-header">
+              <span id="battleMeta">No battle data yet</span>
+              <span id="battleSync">Never</span>
+            </div>
+            <div class="character-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom:8px;">
+              <div class="char-box">Wins: <strong id="battleWins">0</strong></div>
+              <div class="char-box">Losses: <strong id="battleLosses">0</strong></div>
+              <div class="char-box">Winrate: <strong id="battleWinrate">0%</strong></div>
+              <div class="char-box">Fights: <strong id="battleFights">0</strong></div>
+              <div class="char-box">Energy Used: <strong id="battleEnergyUsed">0</strong></div>
+              <div class="char-box">Attack Clicks: <strong id="battleAttackClicks">0</strong></div>
+              <div class="char-box">Misses: <strong id="battleMisses">0</strong></div>
+              <div class="char-box">Retries: <strong id="battleRetries">0</strong></div>
+            </div>
+            <div class="quest-live-row head">
+              <span>Recent Event</span><span>Lvl</span><span>Flow</span><span>Action</span><span>Count</span><span>When</span>
+            </div>
+            <div id="battleRows"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -467,6 +500,19 @@
     const LOG_ROWS = 7;
     let activePanelTab = 'activity';
     let lastQuestLiveAt = 0;
+    let lastBotLogEvent = null;
+    let lastBattleLiveAt = 0;
+    const battleStats = {
+      wins: 0,
+      losses: 0,
+      fights: 0,
+      energyUsed: 0,
+      attackClicks: 0,
+      misses: 0,
+      retries: 0,
+      lastEnergy: null,
+      recent: []
+    };
 
     function loadUiPrefs() {
       try {
@@ -485,6 +531,7 @@
         quests: !!document.getElementById('quests')?.checked,
         battleEnergy: !!document.getElementById('battleEnergy')?.checked,
         resources: !!document.getElementById('resources')?.checked,
+        delayProfile: String(document.getElementById('delayProfile')?.value || 'balanced'),
         browser: readWindowConfigFromUi(),
         activeTab: activePanelTab || 'activity'
       };
@@ -510,10 +557,14 @@
       if (typeof prefs.resources === 'boolean') {
         document.getElementById('resources').checked = prefs.resources;
       }
+      if (typeof prefs.delayProfile === 'string') {
+        const p = prefs.delayProfile.toLowerCase();
+        document.getElementById('delayProfile').value = ['safe', 'balanced', 'fast-human'].includes(p) ? p : 'balanced';
+      }
       if (prefs.browser && typeof prefs.browser === 'object') {
         applyWindowConfigToUi(prefs.browser);
       }
-      if (typeof prefs.activeTab === 'string' && ['activity', 'drops', 'quests'].includes(prefs.activeTab)) {
+      if (typeof prefs.activeTab === 'string' && ['activity', 'drops', 'quests', 'battle'].includes(prefs.activeTab)) {
         activePanelTab = prefs.activeTab;
       }
     }
@@ -567,7 +618,7 @@
 
     function setPanelTab(tabId) {
       activePanelTab = tabId;
-      const tabs = ['activity', 'drops', 'quests'];
+      const tabs = ['activity', 'drops', 'quests', 'battle'];
       tabs.forEach((id) => {
         const tab = document.getElementById(`tab-${id}`);
         const panel = document.getElementById(`panel-${id}`);
@@ -575,6 +626,71 @@
         if (panel) panel.classList.toggle('active', id === tabId);
       });
       saveUiPrefs();
+    }
+
+    function pushBattleEvent(text, level = 'info', flow = 'battle', action = 'log') {
+      battleStats.recent.unshift({
+        text: String(text || ''),
+        level: String(level || 'info'),
+        flow: String(flow || 'battle'),
+        action: String(action || 'log'),
+        at: Date.now()
+      });
+      if (battleStats.recent.length > 12) {
+        battleStats.recent.length = 12;
+      }
+      lastBattleLiveAt = Date.now();
+    }
+
+    function renderBattleAnalytics() {
+      const fights = Number(battleStats.fights || 0);
+      const wins = Number(battleStats.wins || 0);
+      const losses = Number(battleStats.losses || 0);
+      const winrate = fights > 0 ? Math.round((wins / fights) * 100) : 0;
+      const age = lastBattleLiveAt ? Math.max(0, Math.floor((Date.now() - lastBattleLiveAt) / 1000)) : null;
+
+      const byId = (id) => document.getElementById(id);
+      byId('battleWins').innerText = wins.toLocaleString();
+      byId('battleLosses').innerText = losses.toLocaleString();
+      byId('battleWinrate').innerText = `${winrate}%`;
+      byId('battleFights').innerText = fights.toLocaleString();
+      byId('battleEnergyUsed').innerText = Number(battleStats.energyUsed || 0).toLocaleString();
+      byId('battleAttackClicks').innerText = Number(battleStats.attackClicks || 0).toLocaleString();
+      byId('battleMisses').innerText = Number(battleStats.misses || 0).toLocaleString();
+      byId('battleRetries').innerText = Number(battleStats.retries || 0).toLocaleString();
+      byId('battleMeta').textContent = `Session battle stats | wins ${wins} / losses ${losses}`;
+      byId('battleSync').textContent = age === null ? 'Never' : `${age}s ago`;
+
+      const rowsHost = byId('battleRows');
+      rowsHost.innerHTML = '';
+      if (!battleStats.recent.length) {
+        const empty = document.createElement('div');
+        empty.className = 'log-line log-placeholder';
+        empty.textContent = 'Waiting for battle events...';
+        rowsHost.appendChild(empty);
+        return;
+      }
+
+      battleStats.recent.forEach((row) => {
+        const line = document.createElement('div');
+        line.className = 'quest-live-row';
+        const ageSec = Math.max(0, Math.floor((Date.now() - row.at) / 1000));
+        const cols = [
+          { text: row.text, className: 'quest-live-name' },
+          { text: row.level },
+          { text: row.flow },
+          { text: row.action },
+          { text: '1' },
+          { text: `${ageSec}s ago` }
+        ];
+        cols.forEach((col) => {
+          const span = document.createElement('span');
+          if (col.className) span.className = col.className;
+          span.textContent = String(col.text || '');
+          line.appendChild(span);
+        });
+        rowsHost.appendChild(line);
+      });
     }
 
     function fmt(val, fallback = '-') {
@@ -756,6 +872,18 @@
 
       setStateClass(document.getElementById('hp').closest('.char-box'), hpProgress);
       setStateClass(document.getElementById('qp').closest('.char-box'), qpProgress);
+
+      const currentEnergy = Number(s.energy);
+      if (Number.isFinite(currentEnergy)) {
+        if (battleStats.lastEnergy === null) {
+          battleStats.lastEnergy = currentEnergy;
+        } else if (currentEnergy < battleStats.lastEnergy) {
+          battleStats.energyUsed += (battleStats.lastEnergy - currentEnergy);
+          lastBattleLiveAt = Date.now();
+        }
+        battleStats.lastEnergy = currentEnergy;
+      }
+      renderBattleAnalytics();
     });
 
     socket.on('bot-log', msg => {
@@ -768,6 +896,39 @@
       log.prepend(div);
       while (log.children.length > LOG_ROWS) log.lastElementChild.remove();
       ensureRows('log', 'Waiting for activity...');
+    });
+
+    socket.on('bot-log-event', payload => {
+      lastBotLogEvent = payload || null;
+      const evt = payload || {};
+      const message = String(evt.message || '');
+      const flow = String(evt.flow || '').toLowerCase();
+      const level = String(evt.level || 'info');
+      const action = String(evt.action || 'log');
+      const text = message.toLowerCase();
+
+      if (flow !== 'battle' && !text.includes('battle')) return;
+
+      if (text.includes('generate next opponent clicked')) {
+        battleStats.wins += 1;
+        battleStats.fights += 1;
+      } else if (text.includes('fight stalled') || text.includes('error')) {
+        battleStats.losses += 1;
+        battleStats.fights += 1;
+      }
+
+      if (text.includes('attack clicked')) {
+        battleStats.attackClicks += 1;
+      }
+      if (text.includes('miss ') || text.includes('no target button found')) {
+        battleStats.misses += 1;
+      }
+      if (text.includes('retry') || text.includes('recover')) {
+        battleStats.retries += 1;
+      }
+
+      pushBattleEvent(message || 'battle event', level, flow || 'battle', action);
+      renderBattleAnalytics();
     });
 
     socket.on('new-loot', html => {
@@ -832,6 +993,7 @@
     document.getElementById('quests').onchange = saveUiPrefs;
     document.getElementById('battleEnergy').onchange = saveUiPrefs;
     document.getElementById('resources').onchange = saveUiPrefs;
+    document.getElementById('delayProfile').onchange = saveUiPrefs;
 
     document.getElementById('btn-apply-window').onclick = () => {
       sendWindowConfig();
@@ -853,17 +1015,20 @@
         combat: document.getElementById('combat').checked,
         quests: document.getElementById('quests').checked,
         battleEnergy: document.getElementById('battleEnergy').checked,
-        resources: document.getElementById('resources').checked
+        resources: document.getElementById('resources').checked,
+        delayProfile: document.getElementById('delayProfile').value
       });
     };
 
     document.getElementById('tab-activity').onclick = () => setPanelTab('activity');
     document.getElementById('tab-drops').onclick = () => setPanelTab('drops');
     document.getElementById('tab-quests').onclick = () => setPanelTab('quests');
+    document.getElementById('tab-battle').onclick = () => setPanelTab('battle');
 
     applyUiPrefs(loadUiPrefs());
     ensureRows('drops', 'Waiting for loot...');
     ensureRows('log', 'Waiting for activity...');
+    renderBattleAnalytics();
     setPanelTab(activePanelTab || 'activity');
   </script>
 </body>

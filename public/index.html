@@ -24,16 +24,18 @@
       display: flex;
       flex-direction: column;
     }
-    .top-bar {
+    .app-header {
       background: linear-gradient(180deg, rgba(17,24,39,0.96) 0%, rgba(15,23,42,0.96) 100%);
       border-bottom: 1px solid var(--border);
-      padding: 8px 10px;
-      display: grid;
-      grid-template-columns: repeat(8, minmax(120px, 1fr));
-      gap: 6px;
-      font-weight: 700;
-      position: relative;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      font-weight: 600;
     }
+    .header-user span { color: #93c5fd; }
+    .header-sync { color: #93a0b5; }
     .stat-item {
       background: rgba(148, 163, 184, 0.08);
       border: 1px solid rgba(148, 163, 184, 0.22);
@@ -113,32 +115,52 @@
       background: rgba(248, 113, 113, 0.11) !important;
     }
 
-    @media (max-width: 1080px) {
-      .top-bar {
-        grid-template-columns: repeat(4, minmax(120px, 1fr));
-      }
-      .user-chip {
-        grid-column: 1 / span 2;
-      }
-      .sync-chip {
-        grid-column: 3 / span 2;
-      }
+    .character-card {
+      width: min(1020px, 96%);
+      margin: 10px auto 0;
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 10px;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 10px;
     }
-    @media (max-width: 760px) {
-      .top-bar {
-        grid-template-columns: repeat(2, minmax(130px, 1fr));
-      }
-      .user-chip {
-        grid-column: 1 / -1;
-      }
-      .sync-chip {
-        grid-column: 1 / -1;
-        text-align: left;
-      }
-      .progress-wrap {
-        grid-template-columns: 1fr;
-      }
+    .character-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 8px;
     }
+    .char-box {
+      background: rgba(148, 163, 184, 0.08);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .char-box strong { color: var(--brand); }
+    .section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #9aa3b2;
+      margin-bottom: 4px;
+      font-weight: 700;
+    }
+    .skills-list {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+    }
+    .skill-row {
+      display: flex;
+      justify-content: space-between;
+      background: rgba(148, 163, 184, 0.08);
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .skill-row span:last-child { color: var(--brand); font-weight: 700; }
 
     /* âœ… Alarm banner */
     .alarm-banner {
@@ -189,12 +211,37 @@
     }
     .main-content {
       flex: 1;
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: center;
       padding: 12px;
+      gap: 6px;
     }
     .log-section { display: flex; flex-direction: column; }
+    .panel-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .panel-tab {
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(148, 163, 184, 0.08);
+      color: #cbd5e1;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    .panel-tab.active {
+      border-color: rgba(79, 70, 229, 0.7);
+      background: rgba(79, 70, 229, 0.18);
+      color: #dbeafe;
+    }
+    .panel-view { display: none; }
+    .panel-view.active { display: block; }
     .log-title {
       font-size: 12px;
       text-transform: uppercase;
@@ -209,6 +256,18 @@
       border-radius: 6px;
       overflow-y: auto;
       padding: 8px;
+    }
+    .window.fixed-rows {
+      overflow: hidden;
+      height: calc(7 * 24px + 16px);
+      min-height: calc(7 * 24px + 16px);
+      max-height: calc(7 * 24px + 16px);
+    }
+    .bottom-log {
+      width: min(1020px, 96%);
+      margin: 0 auto;
+      min-height: 0;
+      max-height: none;
     }
     .btn {
       padding: 12px;
@@ -225,42 +284,70 @@
       padding: 6px 8px;
       border-bottom: 1px solid rgba(255,255,255,0.05);
       font-size: 13px;
+      height: 24px;
+      box-sizing: border-box;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+    }
+    .log-placeholder {
+      color: #6b7280;
+      font-style: italic;
     }
     .msg-gold { color: #f1c40f; font-weight: 600; }
     .msg-error { color: #ff7675; }
     .msg-drop-item { background: rgba(46,204,113,0.08); border-left: 3px solid var(--green); }
+    .quest-live-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+      font-size: 12px;
+      color: #93a0b5;
+    }
+    .quest-live-row {
+      display: grid;
+      grid-template-columns: 2.2fr 0.7fr 0.7fr 0.8fr 0.8fr 0.8fr;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      font-size: 12px;
+    }
+    .quest-live-row.head {
+      color: #9aa3b2;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .quest-live-name {
+      color: #dbeafe;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @media (max-width: 900px) {
+      .character-card {
+        grid-template-columns: 1fr;
+      }
+      .character-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
   </style>
 </head>
 <body>
 
-    <div class="top-bar">
-    <div class="user-chip">User: <span id="username">-</span></div>
-    <div class="sync-chip">Last sync: <span id="lastSync">no data yet</span></div>
-    <div class="stat-item">Level: <span id="level">0</span></div>
-    <div class="stat-item">Gold: <span id="gold">0</span></div>
-    <div class="stat-item">Bank: <span id="bank">0</span></div>
-    <div class="stat-item">Diamonds: <span id="diamonds">0</span></div>
-    <div class="stat-item">Total Steps: <span id="totalSteps">0</span></div>
-    <div class="stat-item">XP Remaining: <span id="xp">0</span></div>
-    <div class="stat-item">Quest: <span id="qp">0/0</span></div>
-    <div class="stat-item">Life: <span id="hp">0/0</span></div>
-
-    <div id="alarmBanner" class="alarm-banner">ALARM</div>
-    <div class="progress-wrap">
-      <div class="mini-progress">
-        <div class="mini-label"><span>XP progress</span><span id="xpProgressText">0%</span></div>
-        <div class="mini-bar"><span id="xpProgress"></span></div>
-      </div>
-      <div class="mini-progress">
-        <div class="mini-label"><span>Health</span><span id="hpProgressText">0%</span></div>
-        <div class="mini-bar"><span id="hpProgress"></span></div>
-      </div>
-      <div class="mini-progress">
-        <div class="mini-label"><span>Quest points</span><span id="qpProgressText">0%</span></div>
-        <div class="mini-bar"><span id="qpProgress"></span></div>
-      </div>
-    </div>
+  <div class="app-header">
+    <div class="header-user">User: <span id="username">-</span></div>
+    <div class="header-sync">Last sync: <span id="lastSync">no data yet</span></div>
   </div>
+  <div id="alarmBanner" class="alarm-banner">ALARM</div>
 
   <div class="container">
     <div class="sidebar">
@@ -275,27 +362,98 @@
         </select>
       </div>
       <div class="field">
-        <label for="browserWidth">Breedte</label>
+        <label for="browserWidth">Width</label>
         <input type="number" id="browserWidth" min="800" max="3840" step="10" value="1400" />
       </div>
       <div class="field">
-        <label for="browserHeight">Hoogte</label>
+        <label for="browserHeight">Height</label>
         <input type="number" id="browserHeight" min="600" max="2160" step="10" value="900" />
       </div>
       <button id="btn-apply-window" class="btn btn-start">Apply Browser Size</button>
       <hr style="border-color:var(--border);margin:6px 0;">
       <label><input type="checkbox" id="combat" checked> Combat</label>
+      <label><input type="checkbox" id="quests" checked> Quests</label>
+      <label><input type="checkbox" id="battleEnergy"> Battle (full energy burst)</label>
       <label><input type="checkbox" id="resources" checked> Gathering</label>
     </div>
 
     <div class="main-content">
-      <div class="log-section">
-        <div class="log-title">ACTIVITEITEN <span id="status" style="color:var(--red)">OFFLINE</span></div>
-        <div id="log" class="window"></div>
+      <div class="character-card">
+        <div>
+          <div class="section-title">Character</div>
+          <div class="character-grid">
+            <div class="char-box">Level: <strong id="level">0</strong></div>
+            <div class="char-box">Gold: <strong id="gold">0</strong></div>
+            <div class="char-box">Bank: <strong id="bank">0</strong></div>
+            <div class="char-box">Diamonds: <strong id="diamonds">0</strong></div>
+            <div class="char-box">Total Steps: <strong id="totalSteps">0</strong></div>
+            <div class="char-box">XP Remaining: <strong id="xp">0</strong></div>
+            <div class="char-box">Quest Points: <strong id="qp">0/0</strong></div>
+            <div class="char-box">Health: <strong id="hp">0/0</strong></div>
+            <div class="char-box">Energy: <strong id="energy">0/0</strong></div>
+            <div class="char-box">Strength: <strong id="strength">0</strong></div>
+            <div class="char-box">Defence: <strong id="defence">0</strong></div>
+            <div class="char-box">Dexterity: <strong id="dexterity">0</strong></div>
+            <div class="char-box">spATK Damage: <strong id="spatk">0%</strong></div>
+            <div class="char-box">Points Remaining: <strong id="pointsRemaining">0</strong></div>
+          </div>
+          <div class="progress-wrap" style="margin-top:8px;">
+            <div class="mini-progress">
+              <div class="mini-label"><span>XP progress</span><span id="xpProgressText">0%</span></div>
+              <div class="mini-bar"><span id="xpProgress"></span></div>
+            </div>
+            <div class="mini-progress">
+              <div class="mini-label"><span>Health</span><span id="hpProgressText">0%</span></div>
+              <div class="mini-bar"><span id="hpProgress"></span></div>
+            </div>
+            <div class="mini-progress">
+              <div class="mini-label"><span>Quest points</span><span id="qpProgressText">0%</span></div>
+              <div class="mini-bar"><span id="qpProgress"></span></div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="section-title">Skills</div>
+          <div class="skills-list">
+            <div class="skill-row"><span>Mining</span><span id="skillMining">0</span></div>
+            <div class="skill-row"><span>Crafting</span><span id="skillCrafting">0</span></div>
+            <div class="skill-row"><span>Fishing</span><span id="skillFishing">0</span></div>
+            <div class="skill-row"><span>Woodcutting</span><span id="skillWoodcutting">0</span></div>
+            <div class="skill-row"><span>Treasure Hunting</span><span id="skillTreasure">0</span></div>
+          </div>
+        </div>
       </div>
-      <div class="log-section">
-        <div class="log-title">DROPS & LOOT <span style="color:var(--green)">LIVE</span></div>
-        <div id="drops" class="window"></div>
+
+      <div class="log-section bottom-log">
+        <div class="panel-tabs">
+          <button id="tab-activity" class="panel-tab active" type="button">Activity</button>
+          <button id="tab-drops" class="panel-tab" type="button">Drops</button>
+          <button id="tab-quests" class="panel-tab" type="button">Quest Live</button>
+        </div>
+
+        <div id="panel-activity" class="panel-view active">
+          <div class="log-title">Activity Log <span id="status" style="color:var(--red)">OFFLINE</span></div>
+          <div id="log" class="window fixed-rows"></div>
+        </div>
+
+        <div id="panel-drops" class="panel-view">
+          <div class="log-title">Drops & Loot <span style="color:var(--green)">LIVE</span></div>
+          <div id="drops" class="window fixed-rows"></div>
+        </div>
+
+        <div id="panel-quests" class="panel-view">
+          <div class="log-title">Quest Live Reader <span style="color:var(--green)">LIVE</span></div>
+          <div class="window">
+            <div class="quest-live-header">
+              <span id="questLiveMeta">No quest data yet</span>
+              <span id="questLiveSync">Never</span>
+            </div>
+            <div class="quest-live-row head">
+              <span>Quest</span><span>Lvl</span><span>Succ</span><span>XP</span><span>Gold</span><span>Prog</span>
+            </div>
+            <div id="questLiveRows"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -305,6 +463,9 @@
     let isRunning = false;
     let browserWindow = { mode: 'maximized', width: 1400, height: 900 };
     let lastStatsSeenAt = 0;
+    const LOG_ROWS = 7;
+    let activePanelTab = 'activity';
+    let lastQuestLiveAt = 0;
 
     setInterval(() => {
       const label = document.getElementById('lastSync');
@@ -335,6 +496,107 @@
 
     function sendWindowConfig() {
       socket.emit('set-browser-window', readWindowConfigFromUi());
+    }
+
+    function ensureRows(containerId, placeholderText) {
+      const box = document.getElementById(containerId);
+      if (!box) return;
+
+      while (box.children.length < LOG_ROWS) {
+        const div = document.createElement('div');
+        div.className = 'log-line log-placeholder';
+        div.textContent = placeholderText;
+        box.appendChild(div);
+      }
+
+      while (box.children.length > LOG_ROWS) {
+        box.lastElementChild.remove();
+      }
+    }
+
+    function setPanelTab(tabId) {
+      activePanelTab = tabId;
+      const tabs = ['activity', 'drops', 'quests'];
+      tabs.forEach((id) => {
+        const tab = document.getElementById(`tab-${id}`);
+        const panel = document.getElementById(`panel-${id}`);
+        if (tab) tab.classList.toggle('active', id === tabId);
+        if (panel) panel.classList.toggle('active', id === tabId);
+      });
+    }
+
+    function fmt(val, fallback = '-') {
+      if (val === null || val === undefined || Number.isNaN(Number(val))) return fallback;
+      return Number(val).toLocaleString();
+    }
+
+    function renderQuestLive(payload) {
+      const rowsHost = document.getElementById('questLiveRows');
+      const meta = document.getElementById('questLiveMeta');
+      const sync = document.getElementById('questLiveSync');
+      if (!rowsHost || !meta || !sync) return;
+
+      const quests = Array.isArray(payload?.quests) ? payload.quests.slice(0, 8) : [];
+      const qp = payload?.quest_points;
+      const maxQp = payload?.max_quest_points;
+      meta.textContent = `Quest points: ${fmt(qp, '0')}/${fmt(maxQp, '0')} | ${quests.length} quest(s)`;
+
+      if (Number(payload?.updated_at) > 0) {
+        lastQuestLiveAt = Number(payload.updated_at);
+      }
+      const age = lastQuestLiveAt ? Math.max(0, Math.floor((Date.now() - lastQuestLiveAt) / 1000)) : null;
+      sync.textContent = age === null ? 'Never' : `${age}s ago`;
+
+      rowsHost.innerHTML = '';
+      if (quests.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'log-line log-placeholder';
+        empty.textContent = 'Waiting for quest payload...';
+        rowsHost.appendChild(empty);
+        return;
+      }
+
+      quests.forEach((q) => {
+        const row = document.createElement('div');
+        row.className = 'quest-live-row';
+
+        const name = document.createElement('span');
+        name.className = 'quest-live-name';
+        name.textContent = q.title || 'Unknown';
+        row.appendChild(name);
+
+        const level = document.createElement('span');
+        level.textContent = fmt(q.level_required, '-');
+        row.appendChild(level);
+
+        const succ = document.createElement('span');
+        succ.textContent = q.success_chance === null || q.success_chance === undefined ? '-' : `${Math.round(Number(q.success_chance))}%`;
+        row.appendChild(succ);
+
+        const xp = document.createElement('span');
+        xp.textContent = fmt(q.experience, '-');
+        row.appendChild(xp);
+
+        const gold = document.createElement('span');
+        gold.textContent = fmt(q.gold, '-');
+        row.appendChild(gold);
+
+        const prog = document.createElement('span');
+        if (q.is_completed) {
+          prog.textContent = 'Done';
+        } else if (q.remaining_amount !== null && q.remaining_amount !== undefined) {
+          prog.textContent = `${fmt(q.remaining_amount, '0')} left`;
+        } else if (q.completed_amount !== null && q.completed_amount !== undefined && q.amount_to_complete !== null && q.amount_to_complete !== undefined) {
+          prog.textContent = `${fmt(q.completed_amount, '0')}/${fmt(q.amount_to_complete, '0')}`;
+        } else if (q.progress_percent !== null && q.progress_percent !== undefined) {
+          prog.textContent = `${Math.round(Number(q.progress_percent))}%`;
+        } else {
+          prog.textContent = '-';
+        }
+        row.appendChild(prog);
+
+        rowsHost.appendChild(row);
+      });
     }
 
     function playAlarmBeep() {
@@ -387,6 +649,7 @@
 
     socket.on('update-stats', s => {
       const setStateClass = (el, pct) => {
+        if (!el) return;
         el.classList.remove('stat-good', 'stat-warn', 'stat-bad');
         if (pct < 30) el.classList.add('stat-bad');
         else if (pct < 60) el.classList.add('stat-warn');
@@ -411,6 +674,17 @@
       document.getElementById('xp').innerText = Number(s.xp_remaining || s.xp || 0).toLocaleString();
       document.getElementById('qp').innerText = `${Number(s.qp || 0).toLocaleString()}/${Number(s.max_qp || 0).toLocaleString()}`;
       document.getElementById('hp').innerText = `${Number(s.current_hp || 0).toLocaleString()}/${Number(s.max_hp || 0).toLocaleString()}`;
+      document.getElementById('energy').innerText = `${Number(s.energy || 0).toLocaleString()}/${Number(s.max_energy || 0).toLocaleString()}`;
+      document.getElementById('strength').innerText = Number(s.strength || 0).toLocaleString();
+      document.getElementById('defence').innerText = Number(s.defence || 0).toLocaleString();
+      document.getElementById('dexterity').innerText = Number(s.dexterity || 0).toLocaleString();
+      document.getElementById('spatk').innerText = s.spatk_bonus || '0%';
+      document.getElementById('pointsRemaining').innerText = Number(s.points_remaining || 0).toLocaleString();
+      document.getElementById('skillMining').innerText = Number(s.skill_mining || 0).toLocaleString();
+      document.getElementById('skillCrafting').innerText = Number(s.skill_crafting || 0).toLocaleString();
+      document.getElementById('skillFishing').innerText = Number(s.skill_fishing || 0).toLocaleString();
+      document.getElementById('skillWoodcutting').innerText = Number(s.skill_woodcutting || 0).toLocaleString();
+      document.getElementById('skillTreasure').innerText = Number(s.skill_treasure_hunting || 0).toLocaleString();
 
       const xpProgress = Math.max(0, Math.min(100, Number(s.xp_progress || 0)));
       const hpProgress = Math.max(0, Math.min(100, Number(s.hp_percent || 0)));
@@ -428,28 +702,35 @@
       setTextClass(hpText, hpProgress);
       setTextClass(qpText, qpProgress);
 
-      setStateClass(document.getElementById('hp').closest('.stat-item'), hpProgress);
-      setStateClass(document.getElementById('qp').closest('.stat-item'), qpProgress);
+      setStateClass(document.getElementById('hp').closest('.char-box'), hpProgress);
+      setStateClass(document.getElementById('qp').closest('.char-box'), qpProgress);
     });
 
     socket.on('bot-log', msg => {
       const log = document.getElementById('log');
       const div = document.createElement('div');
       div.className = 'log-line';
-      if (msg.includes('ðŸ’°') || msg.includes('goud')) div.classList.add('msg-gold');
+      if (msg.includes('ðŸ’°') || msg.toLowerCase().includes('gold')) div.classList.add('msg-gold');
       if (msg.includes('âš ï¸') || msg.includes('CAPTCHA') || msg.includes('anti-bot')) div.classList.add('msg-error');
       div.textContent = new Date().toLocaleTimeString() + '  ' + msg;
       log.prepend(div);
-      if (log.children.length > 60) log.lastElementChild.remove();
+      while (log.children.length > LOG_ROWS) log.lastElementChild.remove();
+      ensureRows('log', 'Waiting for activity...');
     });
 
     socket.on('new-loot', html => {
       const drops = document.getElementById('drops');
+      if (!drops) return;
       const div = document.createElement('div');
       div.className = 'log-line msg-drop-item';
       div.innerHTML = `<span style="color:#888;font-size:11px">${new Date().toLocaleTimeString()}</span> ${html}`;
       drops.prepend(div);
-      if (drops.children.length > 60) drops.lastElementChild.remove();
+      while (drops.children.length > LOG_ROWS) drops.lastElementChild.remove();
+      ensureRows('drops', 'Waiting for loot...');
+    });
+
+    socket.on('quest-live', payload => {
+      renderQuestLive(payload || {});
     });
 
     socket.on('browser-ready', () => {
@@ -509,9 +790,19 @@
 
       socket.emit('toggle-bot', {
         combat: document.getElementById('combat').checked,
+        quests: document.getElementById('quests').checked,
+        battleEnergy: document.getElementById('battleEnergy').checked,
         resources: document.getElementById('resources').checked
       });
     };
+
+    document.getElementById('tab-activity').onclick = () => setPanelTab('activity');
+    document.getElementById('tab-drops').onclick = () => setPanelTab('drops');
+    document.getElementById('tab-quests').onclick = () => setPanelTab('quests');
+
+    ensureRows('drops', 'Waiting for loot...');
+    ensureRows('log', 'Waiting for activity...');
+    setPanelTab('activity');
   </script>
 </body>
 </html>

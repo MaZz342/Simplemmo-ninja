@@ -14,6 +14,14 @@ let didLogStatsMissing = false;
 let responseStatsHooked = false;
 let didLogApiSync = false;
 const STATS_POLL_MS = Number(process.env.STATS_POLL_MS || 7000);
+const DIRECT_STATS_API_MIN_INTERVAL_MS = Number(process.env.DIRECT_STATS_API_MIN_INTERVAL_MS || 15000);
+const CHARACTER_SNAPSHOT_MIN_INTERVAL_MS = Number(process.env.CHARACTER_SNAPSHOT_MIN_INTERVAL_MS || 30000);
+const QUEST_LIVE_POLL_MIN_INTERVAL_MS = Number(process.env.QUEST_LIVE_POLL_MIN_INTERVAL_MS || 12000);
+let lastDirectStatsApiAt = 0;
+let lastCharacterSnapshotAt = 0;
+let lastQuestLivePollAt = 0;
+let questGetEndpointCache = '';
+let didLogQuestLiveReady = false;
 
 const CHROME_PATH =
   process.env.CHROME_PATH ||
@@ -22,6 +30,7 @@ const CHROME_PATH =
 const DEFAULT_USER_DATA_DIR =
   process.env.USER_DATA_DIR ||
   path.join(os.tmpdir(), 'smmo-puppeteer-profile');
+const WINDOW_CONFIG_PATH = path.join(__dirname, '.runtime', 'browser-window.json');
 let windowConfig = {
   mode: (process.env.BROWSER_WINDOW_MODE || 'maximized').toLowerCase(),
   width: Number(process.env.BROWSER_WIDTH || 1366),
@@ -55,6 +64,32 @@ function normalizeWindowConfig(cfg = {}) {
   const width = Number.isFinite(Number(cfg.width)) && Number(cfg.width) > 0 ? Number(cfg.width) : 1366;
   const height = Number.isFinite(Number(cfg.height)) && Number(cfg.height) > 0 ? Number(cfg.height) : 900;
   return { mode, width, height };
+}
+
+function loadPersistedWindowConfig() {
+  try {
+    if (!fs.existsSync(WINDOW_CONFIG_PATH)) return null;
+    const raw = fs.readFileSync(WINDOW_CONFIG_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return normalizeWindowConfig(parsed || {});
+  } catch {
+    return null;
+  }
+}
+
+function persistWindowConfig(cfg) {
+  try {
+    const normalized = normalizeWindowConfig(cfg || {});
+    fs.mkdirSync(path.dirname(WINDOW_CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(WINDOW_CONFIG_PATH, JSON.stringify(normalized, null, 2), 'utf8');
+  } catch {
+    // non-fatal
+  }
+}
+
+const persistedWindowConfig = loadPersistedWindowConfig();
+if (persistedWindowConfig) {
+  windowConfig = persistedWindowConfig;
 }
 
 function buildBaseOptions(cfg) {
@@ -142,6 +177,11 @@ async function startBrowser(socket, sessionStats) {
     page = null;
     responseStatsHooked = false;
     didLogApiSync = false;
+    lastDirectStatsApiAt = 0;
+    lastCharacterSnapshotAt = 0;
+    lastQuestLivePollAt = 0;
+    questGetEndpointCache = '';
+    didLogQuestLiveReady = false;
   });
 
   page = (await browser.pages())[0] || await browser.newPage();
@@ -229,20 +269,84 @@ function findFirstByKeys(root, keys) {
   return null;
 }
 
+function findBestStatsObject(root) {
+  if (!root || typeof root !== 'object') return null;
+  const targetKeys = [
+    'level', 'gold', 'bank', 'diamonds', 'total_steps',
+    'exp_remaining', 'current_hp', 'max_hp', 'energy', 'max_energy',
+    'quest_points', 'max_quest_points',
+    'strength', 'defence', 'dexterity'
+  ];
+  const keySet = new Set(targetKeys);
+  const seen = new Set();
+  const queue = [root];
+  let best = null;
+  let bestScore = 0;
+
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object') continue;
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    const keys = Object.keys(node);
+    const score = keys.filter((k) => keySet.has(String(k).toLowerCase())).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = node;
+    }
+
+    for (const v of Object.values(node)) {
+      if (v && typeof v === 'object') queue.push(v);
+    }
+  }
+
+  return bestScore >= 3 ? best : null;
+}
+
+function readDirect(obj, keys) {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const v = obj[key];
+      if (v !== null && v !== undefined && String(v).trim() !== '') {
+        return v;
+      }
+    }
+  }
+  return null;
+}
+
 function applyStatsFromPayload(payload, sessionStats) {
   if (!payload || typeof payload !== 'object' || !sessionStats) return false;
 
-  const level = toInt(findFirstByKeys(payload, ['level']));
-  const gold = toInt(findFirstByKeys(payload, ['gold']));
-  const bank = toInt(findFirstByKeys(payload, ['bank', 'bank_gold', 'bank_balance']));
-  const diamonds = toInt(findFirstByKeys(payload, ['diamonds', 'diamond']));
-  const totalSteps = toInt(findFirstByKeys(payload, ['total_steps', 'steps_total']));
-  const xpRemaining = toInt(findFirstByKeys(payload, ['exp_remaining', 'xp_remaining']));
-  const currentHp = toInt(findFirstByKeys(payload, ['current_hp', 'health_current']));
-  const maxHp = toInt(findFirstByKeys(payload, ['max_hp', 'health_max']));
-  const qp = toInt(findFirstByKeys(payload, ['quest_points', 'qp', 'current_quest_points']));
-  const maxQp = toInt(findFirstByKeys(payload, ['max_quest_points', 'max_qp', 'quest_points_max']));
-  const usernameRaw = findFirstByKeys(payload, ['username', 'name']);
+  const source = findBestStatsObject(payload);
+  if (!source) return false;
+
+  const level = toInt(readDirect(source, ['level']));
+  const gold = toInt(readDirect(source, ['gold']));
+  const bank = toInt(readDirect(source, ['bank', 'bank_gold', 'bank_balance']));
+  const diamonds = toInt(readDirect(source, ['diamonds', 'diamond']));
+  const totalSteps = toInt(readDirect(source, ['total_steps', 'steps_total']));
+  const xpRemaining = toInt(readDirect(source, ['exp_remaining', 'xp_remaining']));
+  const currentHp = toInt(readDirect(source, ['current_hp', 'health_current']));
+  const maxHp = toInt(readDirect(source, ['max_hp', 'health_max']));
+  const energy = toInt(readDirect(source, ['energy', 'current_energy']));
+  const maxEnergy = toInt(readDirect(source, ['max_energy', 'energy_max']));
+  const qp = toInt(readDirect(source, ['quest_points', 'qp', 'current_quest_points']));
+  const maxQp = toInt(readDirect(source, ['max_quest_points', 'max_qp', 'quest_points_max']));
+  const strength = toInt(readDirect(source, ['strength', 'str']));
+  const defence = toInt(readDirect(source, ['defence', 'defense']));
+  const dexterity = toInt(readDirect(source, ['dexterity', 'dex']));
+  const pointsRemaining = toInt(readDirect(source, ['points_remaining', 'skill_points_remaining']));
+  const mining = toInt(readDirect(source, ['mining', 'mining_level']));
+  const crafting = toInt(readDirect(source, ['crafting', 'crafting_level']));
+  const fishing = toInt(readDirect(source, ['fishing', 'fishing_level']));
+  const woodcutting = toInt(readDirect(source, ['woodcutting', 'woodcutting_level']));
+  const treasure = toInt(readDirect(source, ['treasure_hunting', 'treasure_hunting_level']));
+  const spatkRaw = readDirect(source, ['spatk_bonus', 'spatk_damage', 'special_attack_damage']);
+  const spatkBonus = spatkRaw !== null && spatkRaw !== undefined ? String(spatkRaw).trim() : '';
+  const usernameRaw = readDirect(source, ['username', 'name']) || findFirstByKeys(payload, ['username', 'name']);
   const username = usernameRaw ? String(usernameRaw).trim() : '';
 
   let changed = false;
@@ -253,25 +357,58 @@ function applyStatsFromPayload(payload, sessionStats) {
   };
 
   setIf(username && username !== sessionStats.username, () => { sessionStats.username = username; });
-  setIf(level !== null && level >= 0, () => { sessionStats.level = level; });
-  setIf(gold !== null && gold >= 0, () => { sessionStats.gold = String(gold); });
-  setIf(bank !== null && bank >= 0, () => { sessionStats.bank = String(bank); });
-  setIf(diamonds !== null && diamonds >= 0, () => { sessionStats.diamonds = diamonds; });
-  setIf(totalSteps !== null && totalSteps >= 0, () => { sessionStats.total_steps = totalSteps; });
+  const prevLevel = Number(sessionStats.level || 0);
+  const prevGold = Number(sessionStats.gold || 0);
+  const prevBank = Number(sessionStats.bank || 0);
+  const prevDiamonds = Number(sessionStats.diamonds || 0);
+  const prevTotalSteps = Number(sessionStats.total_steps || 0);
+
+  // Guard against noisy payloads that briefly report zero/non-user values.
+  setIf(level !== null && (level > 0 || prevLevel === 0), () => { sessionStats.level = level; });
+  setIf(gold !== null && (gold > 0 || prevGold === 0), () => { sessionStats.gold = String(gold); });
+  setIf(bank !== null && (bank > 0 || prevBank === 0), () => { sessionStats.bank = String(bank); });
+  setIf(diamonds !== null && (diamonds > 0 || prevDiamonds === 0), () => { sessionStats.diamonds = diamonds; });
+  setIf(totalSteps !== null && (totalSteps > 0 || prevTotalSteps === 0), () => { sessionStats.total_steps = totalSteps; });
   setIf(xpRemaining !== null, () => { sessionStats.xp_remaining = xpRemaining; });
-  setIf(currentHp !== null && currentHp >= 0, () => { sessionStats.current_hp = currentHp; });
-  setIf(maxHp !== null && maxHp > 0, () => { sessionStats.max_hp = maxHp; });
-  setIf(qp !== null && qp >= 0, () => {
-    sessionStats.qp = qp;
-    sessionStats.quest_points = qp;
-  });
-  setIf(maxQp !== null && maxQp > 0, () => {
-    sessionStats.max_qp = maxQp;
-    sessionStats.max_quest_points = maxQp;
+  if (currentHp !== null && maxHp !== null && maxHp > 0) {
+    setIf(currentHp >= 0, () => { sessionStats.current_hp = currentHp; });
+    setIf(maxHp > 0, () => { sessionStats.max_hp = maxHp; });
+  }
+  if (energy !== null && maxEnergy !== null && maxEnergy > 0) {
+    setIf(energy >= 0, () => { sessionStats.energy = energy; });
+    setIf(maxEnergy > 0, () => { sessionStats.max_energy = maxEnergy; });
+  }
+  if (qp !== null && maxQp !== null && maxQp > 0) {
+    setIf(qp >= 0, () => {
+      sessionStats.qp = qp;
+      sessionStats.quest_points = qp;
+    });
+    setIf(maxQp > 0, () => {
+      sessionStats.max_qp = maxQp;
+      sessionStats.max_quest_points = maxQp;
+    });
+  }
+  const prevStrength = Number(sessionStats.strength || 0);
+  const prevDefence = Number(sessionStats.defence || 0);
+  const prevDexterity = Number(sessionStats.dexterity || 0);
+  setIf(strength !== null && (strength > 0 || prevStrength === 0), () => { sessionStats.strength = strength; });
+  setIf(defence !== null && (defence > 0 || prevDefence === 0), () => { sessionStats.defence = defence; });
+  setIf(dexterity !== null && (dexterity > 0 || prevDexterity === 0), () => { sessionStats.dexterity = dexterity; });
+  setIf(pointsRemaining !== null && pointsRemaining >= 0, () => { sessionStats.points_remaining = pointsRemaining; });
+  setIf(mining !== null && mining >= 0, () => { sessionStats.skill_mining = mining; });
+  setIf(crafting !== null && crafting >= 0, () => { sessionStats.skill_crafting = crafting; });
+  setIf(fishing !== null && fishing >= 0, () => { sessionStats.skill_fishing = fishing; });
+  setIf(woodcutting !== null && woodcutting >= 0, () => { sessionStats.skill_woodcutting = woodcutting; });
+  setIf(treasure !== null && treasure >= 0, () => { sessionStats.skill_treasure_hunting = treasure; });
+  setIf(spatkBonus, () => {
+    sessionStats.spatk_bonus = spatkBonus.includes('%') ? spatkBonus : `${spatkBonus}%`;
   });
 
   if (sessionStats.current_hp > 0 && sessionStats.max_hp > 0) {
     sessionStats.hp_percent = Math.max(0, Math.min(100, (sessionStats.current_hp / sessionStats.max_hp) * 100));
+  }
+  if (sessionStats.energy >= 0 && sessionStats.max_energy > 0) {
+    sessionStats.energy_percent = Math.max(0, Math.min(100, (sessionStats.energy / sessionStats.max_energy) * 100));
   }
   if (sessionStats.qp >= 0 && sessionStats.max_qp > 0) {
     sessionStats.qp_percent = Math.max(0, Math.min(100, (sessionStats.qp / sessionStats.max_qp) * 100));
@@ -282,6 +419,180 @@ function applyStatsFromPayload(payload, sessionStats) {
   return changed;
 }
 
+function parseIntFromHtmlById(html, id) {
+  const re = new RegExp(`id=["']${id}["'][^>]*>[\\s\\S]*?(-?\\d[\\d,.]*)`, 'i');
+  const m = String(html || '').match(re);
+  return m && m[1] ? toInt(m[1]) : null;
+}
+
+function parseSkillLevelFromHtml(html, skillName) {
+  const escaped = skillName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`${escaped}[\\s\\S]{0,220}?Level\\s*(-?\\d[\\d,.]*)`, 'i');
+  const m = String(html || '').match(re);
+  return m && m[1] ? toInt(m[1]) : null;
+}
+
+function parseSpatkBonusFromHtml(html) {
+  const idMatch = String(html || '').match(/id=["']add_crit_stat["'][^>]*>\s*([+\-]?\d+(?:[.,]\d+)?)\s*%/i);
+  if (idMatch && idMatch[1]) return `${String(idMatch[1]).replace(',', '.')}%`;
+
+  const genericMatch = String(html || '').match(/spATK\s*Damage[\s\S]{0,200}?([+\-]?\d+(?:[.,]\d+)?)\s*%/i);
+  if (genericMatch && genericMatch[1]) return `${String(genericMatch[1]).replace(',', '.')}%`;
+  return '';
+}
+
+function applyCharacterSnapshotHtml(html, sessionStats) {
+  if (!html || !sessionStats) return false;
+
+  const str = parseIntFromHtmlById(html, 'str_stat');
+  const def = parseIntFromHtmlById(html, 'def_stat');
+  const dex = parseIntFromHtmlById(html, 'dex_stat');
+  const pointsRemaining = parseIntFromHtmlById(html, 'available_points');
+  const mining = parseSkillLevelFromHtml(html, 'Mining');
+  const crafting = parseSkillLevelFromHtml(html, 'Crafting');
+  const fishing = parseSkillLevelFromHtml(html, 'Fishing');
+  const woodcutting = parseSkillLevelFromHtml(html, 'Woodcutting');
+  const treasure = parseSkillLevelFromHtml(html, 'Treasure Hunting');
+  const spatkBonus = parseSpatkBonusFromHtml(html);
+
+  let changed = false;
+  const setNumber = (field, value) => {
+    if (value === null || value === undefined || value < 0) return;
+    if (Number(sessionStats[field] || 0) === Number(value)) return;
+    sessionStats[field] = value;
+    changed = true;
+  };
+  const setString = (field, value) => {
+    const next = String(value || '').trim();
+    if (!next) return;
+    if (String(sessionStats[field] || '').trim() === next) return;
+    sessionStats[field] = next;
+    changed = true;
+  };
+
+  setNumber('strength', str);
+  setNumber('defence', def);
+  setNumber('dexterity', dex);
+  setNumber('points_remaining', pointsRemaining);
+  setNumber('skill_mining', mining);
+  setNumber('skill_crafting', crafting);
+  setNumber('skill_fishing', fishing);
+  setNumber('skill_woodcutting', woodcutting);
+  setNumber('skill_treasure_hunting', treasure);
+  setString('spatk_bonus', spatkBonus);
+
+  if (changed) {
+    sessionStats.stats_updated_at = Date.now();
+  }
+
+  return changed;
+}
+
+function decodeEscapedUrl(value) {
+  return String(value || '')
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/g, '&')
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+function findQuestArray(payload) {
+  if (!payload || typeof payload !== 'object') return [];
+
+  const known = [
+    payload.expeditions,
+    payload.data?.expeditions,
+    payload.value?.expeditions,
+    payload.result?.expeditions,
+    payload.data,
+    payload.value,
+    payload.result
+  ];
+  for (const candidate of known) {
+    if (Array.isArray(candidate) && candidate.length > 0 && typeof candidate[0] === 'object') {
+      return candidate;
+    }
+  }
+
+  const seen = new Set();
+  const queue = [payload];
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object') continue;
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'object') {
+        const probe = value[0];
+        const keys = Object.keys(probe).map((k) => String(k).toLowerCase());
+        const likelyQuest = keys.includes('title') || keys.includes('level_required') || keys.includes('is_completed');
+        if (likelyQuest) return value;
+      }
+      if (value && typeof value === 'object') queue.push(value);
+    }
+  }
+
+  return [];
+}
+
+function toNumberOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeQuestLivePayload(rawPayload) {
+  const list = findQuestArray(rawPayload);
+  const quests = list.map((item) => {
+    const title = String(
+      item?.title ||
+      item?.name ||
+      item?.quest_title ||
+      item?.expedition_title ||
+      ''
+    ).trim();
+    if (!title) return null;
+
+    const completedAmount = toNumberOrNull(item?.completed_amount);
+    const amountToComplete = toNumberOrNull(item?.amount_to_complete);
+    const remainingAmount = (completedAmount !== null && amountToComplete !== null)
+      ? Math.max(0, amountToComplete - completedAmount)
+      : null;
+    return {
+      id: item?.id ?? null,
+      title,
+      level_required: toNumberOrNull(item?.level_required),
+      success_chance: toNumberOrNull(item?.success_chance),
+      experience: toNumberOrNull(item?.experience),
+      gold: toNumberOrNull(item?.gold),
+      is_completed: Boolean(item?.is_completed),
+      completed_amount: completedAmount,
+      amount_to_complete: amountToComplete,
+      remaining_amount: remainingAmount,
+      progress_percent: (completedAmount !== null && amountToComplete && amountToComplete > 0)
+        ? Math.max(0, Math.min(100, Math.floor((completedAmount / amountToComplete) * 100)))
+        : null
+    };
+  }).filter(Boolean).slice(0, 30);
+
+  const questPoints = toNumberOrNull(
+    rawPayload?.quest_points ??
+    rawPayload?.user?.quest_points ??
+    rawPayload?.expedition?.user?.quest_points
+  );
+  const maxQuestPoints = toNumberOrNull(
+    rawPayload?.max_quest_points ??
+    rawPayload?.user?.max_quest_points ??
+    rawPayload?.expedition?.user?.max_quest_points
+  );
+
+  return {
+    quests,
+    quest_points: questPoints,
+    max_quest_points: maxQuestPoints
+  };
+}
+
 function startStatsPolling(socket, sessionStats) {
   if (statsPollInterval) {
     clearInterval(statsPollInterval);
@@ -289,6 +600,11 @@ function startStatsPolling(socket, sessionStats) {
   }
   didLogStatsReady = false;
   didLogStatsMissing = false;
+  lastDirectStatsApiAt = 0;
+  lastCharacterSnapshotAt = 0;
+  lastQuestLivePollAt = 0;
+  questGetEndpointCache = '';
+  didLogQuestLiveReady = false;
 
   if (!sessionStats) {
     return;
@@ -560,6 +876,8 @@ function startStatsPolling(socket, sessionStats) {
       const xpRemaining = parseInteger(snapshot.xpRemaining);
       const currentHp = parseInteger(snapshot.currentHp);
       const maxHp = parseInteger(snapshot.maxHp);
+      const energy = parseInteger(snapshot.energy);
+      const maxEnergy = parseInteger(snapshot.maxEnergy);
       const questPoints = parseInteger(snapshot.questPoints);
       const maxQuestPoints = parseInteger(snapshot.maxQuestPoints);
       const xpPercent = parsePercent(snapshot.xpBarStyle);
@@ -576,6 +894,8 @@ function startStatsPolling(socket, sessionStats) {
       const safeXpRemaining = keepPreviousOnSuspiciousZero(xpRemaining, sessionStats.xp_remaining);
       const safeCurrentHp = keepPreviousOnSuspiciousZero(currentHp, sessionStats.current_hp);
       const safeMaxHp = keepPreviousOnSuspiciousZero(maxHp, sessionStats.max_hp);
+      const safeEnergy = keepPreviousOnSuspiciousZero(energy, sessionStats.energy);
+      const safeMaxEnergy = keepPreviousOnSuspiciousZero(maxEnergy, sessionStats.max_energy);
       const safeQuestPoints = keepPreviousOnSuspiciousZero(questPoints, sessionStats.qp);
       const safeMaxQuestPoints = keepPreviousOnSuspiciousZero(maxQuestPoints, sessionStats.max_qp);
       const safeXpPercent = keepPreviousOnSuspiciousZero(xpPercent, sessionStats.xp_progress);
@@ -591,10 +911,15 @@ function startStatsPolling(socket, sessionStats) {
       if (safeXpPercent !== null && safeXpPercent !== undefined) sessionStats.xp_progress = safeXpPercent;
       if (safeCurrentHp !== null && safeCurrentHp !== undefined) sessionStats.current_hp = safeCurrentHp;
       if (safeMaxHp !== null && safeMaxHp !== undefined) sessionStats.max_hp = safeMaxHp;
+      if (safeEnergy !== null && safeEnergy !== undefined) sessionStats.energy = safeEnergy;
+      if (safeMaxEnergy !== null && safeMaxEnergy !== undefined) sessionStats.max_energy = safeMaxEnergy;
       if (hpPercent !== null) {
         sessionStats.hp_percent = safeHpPercent;
       } else if (safeCurrentHp !== null && safeMaxHp) {
         sessionStats.hp_percent = Math.max(0, Math.min(100, (safeCurrentHp / safeMaxHp) * 100));
+      }
+      if (safeEnergy !== null && safeMaxEnergy) {
+        sessionStats.energy_percent = Math.max(0, Math.min(100, (safeEnergy / safeMaxEnergy) * 100));
       }
       if (safeQuestPoints !== null && safeQuestPoints !== undefined) {
         sessionStats.qp = safeQuestPoints;
@@ -618,6 +943,130 @@ function startStatsPolling(socket, sessionStats) {
       } else if (!didLogStatsMissing && snapshot.username && gold === null && questPoints === null && currentHp === null && xpRemaining === null) {
         didLogStatsMissing = true;
         socket?.emit('bot-log', `Stats not found yet (username only, global=${snapshot.debugFoundGlobal ? 'yes' : 'no'})`);
+      }
+
+      const missingCore =
+        Number(sessionStats.bank || 0) === 0 &&
+        Number(sessionStats.diamonds || 0) === 0 &&
+        Number(sessionStats.current_hp || 0) === 0 &&
+        Number(sessionStats.qp || 0) === 0;
+      const shouldUseDirectApi =
+        missingCore || (Date.now() - lastDirectStatsApiAt >= DIRECT_STATS_API_MIN_INTERVAL_MS);
+
+      if (shouldUseDirectApi) {
+        lastDirectStatsApiAt = Date.now();
+        const apiPayload = await page.evaluate(async () => {
+          try {
+            const resp = await fetch('/api/web-app', { credentials: 'include' });
+            if (!resp.ok) return null;
+            return await resp.json();
+          } catch {
+            return null;
+          }
+        }).catch(() => null);
+
+        if (apiPayload) {
+          const changedFromApi = applyStatsFromPayload(apiPayload, sessionStats);
+          if (changedFromApi && !didLogApiSync) {
+            didLogApiSync = true;
+            socket?.emit('bot-log', 'Live stats synced from direct web-app API');
+          }
+        }
+      }
+
+      const missingCharacterStats =
+        Number(sessionStats.strength || 0) === 0 &&
+        Number(sessionStats.defence || 0) === 0 &&
+        Number(sessionStats.dexterity || 0) === 0 &&
+        String(sessionStats.spatk_bonus || '0%') === '0%';
+      const shouldReadCharacterPage =
+        missingCharacterStats || (Date.now() - lastCharacterSnapshotAt >= CHARACTER_SNAPSHOT_MIN_INTERVAL_MS);
+
+      if (shouldReadCharacterPage) {
+        lastCharacterSnapshotAt = Date.now();
+        const characterHtml = await page.evaluate(async () => {
+          try {
+            const resp = await fetch('/user/character', { credentials: 'include' });
+            if (!resp.ok) return '';
+            return await resp.text();
+          } catch {
+            return '';
+          }
+        }).catch(() => '');
+
+        if (characterHtml) {
+          const changedFromCharacter = applyCharacterSnapshotHtml(characterHtml, sessionStats);
+          if (changedFromCharacter) {
+            socket?.emit('bot-log', 'Character stats synced from /user/character');
+          }
+        }
+      }
+
+      const shouldPollQuestLive = Date.now() - lastQuestLivePollAt >= QUEST_LIVE_POLL_MIN_INTERVAL_MS;
+      if (shouldPollQuestLive) {
+        lastQuestLivePollAt = Date.now();
+
+        const questLiveRaw = await page.evaluate(async (cachedEndpoint) => {
+          const decodeEscaped = (value) => String(value || '')
+            .replace(/\\\//g, '/')
+            .replace(/\\u0026/g, '&')
+            .replace(/&amp;/g, '&')
+            .trim();
+
+          const parseEndpointFromHtml = (htmlText) => {
+            const match = String(htmlText || '').match(/"expedition\.get_endpoint":"([^"]+)"/i);
+            return match && match[1] ? decodeEscaped(match[1]) : '';
+          };
+
+          const tryFetchJson = async (endpoint) => {
+            if (!endpoint) return null;
+            try {
+              const resp = await fetch(endpoint, { credentials: 'include' });
+              if (!resp.ok) return null;
+              return await resp.json();
+            } catch {
+              return null;
+            }
+          };
+
+          let endpoint = decodeEscaped(cachedEndpoint || '');
+          let payload = await tryFetchJson(endpoint);
+
+          if (!payload) {
+            try {
+              const htmlResp = await fetch('/quests?new_page=true', { credentials: 'include' });
+              if (htmlResp.ok) {
+                const html = await htmlResp.text();
+                endpoint = parseEndpointFromHtml(html);
+                payload = await tryFetchJson(endpoint);
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          return {
+            endpoint: endpoint || '',
+            payload: payload || null
+          };
+        }, questGetEndpointCache).catch(() => null);
+
+        if (questLiveRaw && questLiveRaw.endpoint) {
+          questGetEndpointCache = decodeEscapedUrl(questLiveRaw.endpoint);
+        }
+
+        if (questLiveRaw && questLiveRaw.payload) {
+          const normalizedQuest = normalizeQuestLivePayload(questLiveRaw.payload);
+          socket?.emit('quest-live', {
+            updated_at: Date.now(),
+            ...normalizedQuest
+          });
+
+          if (!didLogQuestLiveReady && normalizedQuest.quests.length > 0) {
+            didLogQuestLiveReady = true;
+            socket?.emit('bot-log', `Quest live reader active (${normalizedQuest.quests.length} quests loaded)`);
+          }
+        }
       }
     } catch {
       // Best effort polling: falen mag bot-flow niet stoppen.
@@ -662,6 +1111,7 @@ function getPage() {
 
 function setBrowserWindowConfig(cfg = {}) {
   windowConfig = normalizeWindowConfig(cfg);
+  persistWindowConfig(windowConfig);
   return windowConfig;
 }
 

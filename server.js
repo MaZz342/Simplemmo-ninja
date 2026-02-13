@@ -38,6 +38,9 @@ const sessionStats = {
   qp: 0,
   max_qp: 0,
   qp_percent: 0,
+  energy: 0,
+  max_energy: 0,
+  energy_percent: 0,
   level: 0,
   username: '-',
   bank: '0',
@@ -46,6 +49,16 @@ const sessionStats = {
   current_hp: 0,
   max_hp: 0,
   hp_percent: 100,
+  strength: 0,
+  defence: 0,
+  dexterity: 0,
+  spatk_bonus: '0%',
+  points_remaining: 0,
+  skill_mining: 0,
+  skill_crafting: 0,
+  skill_fishing: 0,
+  skill_woodcutting: 0,
+  skill_treasure_hunting: 0,
   stats_updated_at: 0,
 };
 
@@ -126,6 +139,7 @@ io.on('connection', (socket) => {
     const xpProgress = Number.isFinite(Number(stats?.xp_progress)) ? Math.max(0, Math.min(100, Number(stats.xp_progress))) : 0;
     const hpPercent = Number.isFinite(Number(stats?.hp_percent)) ? Math.max(0, Math.min(100, Number(stats.hp_percent))) : 0;
     const qpPercent = Number.isFinite(Number(stats?.qp_percent)) ? Math.max(0, Math.min(100, Number(stats.qp_percent))) : 0;
+    const energyPercent = Number.isFinite(Number(stats?.energy_percent)) ? Math.max(0, Math.min(100, Number(stats.energy_percent))) : 0;
 
     return {
       ...stats,
@@ -134,7 +148,8 @@ io.on('connection', (socket) => {
       points,
       xp_progress: xpProgress,
       hp_percent: hpPercent,
-      qp_percent: qpPercent
+      qp_percent: qpPercent,
+      energy_percent: energyPercent
     };
   };
 

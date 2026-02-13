@@ -11,3 +11,5 @@
 .tmp
 *.tmp
 *.log
+/.runtime
+/temp

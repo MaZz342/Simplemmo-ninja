@@ -1,4 +1,4 @@
-// logic/travel.js — Travel driver + gather popup + close X + cooldown + adaptive delays
+﻿// logic/travel.js - Travel driver + gather popup + close X + cooldown + adaptive delays
 
 const { checkCaptcha } = require('./captcha');
 const { humanDelay } = require('./human-delay');
@@ -14,7 +14,7 @@ async function safeGoto(page, url, socket) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     return true;
   } catch (e) {
-    socket?.emit('bot-log', `⚠️ goto failed (${url}): ${e.message}`);
+    socket?.emit('bot-log', `goto failed (${url}): ${e.message}`);
     return false;
   }
 }
@@ -89,8 +89,8 @@ async function closePopupByX(page, socket) {
   }).catch(() => ({ ok: false }));
 
   if (clicked && clicked.ok) {
-    socket.emit('bot-log', `❎ Popup closed (X) [${clicked.tag || 'clicked'}]`);
-    await sleep(humanDelay('close', 160, 320));
+    socket.emit('bot-log', `Popup closed (X) [${clicked.tag || 'clicked'}]`);
+    await sleep(humanDelay('close', 450, 900));
     return true;
   }
   return false;
@@ -100,7 +100,7 @@ async function closePopupByXRetry(page, socket) {
   for (let i = 0; i < 3; i++) {
     const ok = await closePopupByX(page, socket);
     if (ok) return true;
-    await sleep(humanDelay('close', 220, 480, { quick: true }));
+    await sleep(humanDelay('close', 600, 1300));
   }
   return false;
 }
@@ -125,24 +125,41 @@ async function clickGatherPopupButton(page, socket) {
   if (!info.visible) return false;
 
   if (info.disabled) {
-    socket.emit('bot-log', `🪟 Popup: #gather_button disabled (${info.label || 'disabled'})`);
+    socket.emit('bot-log', `Popup: #gather_button disabled (${info.label || 'disabled'})`);
     return true;
   }
 
-  await btn.evaluate((el) => el.click());
-  socket.emit('bot-log', `🪟 Popup: gather_button CLICK (${info.label || 'gather'})`);
+  const clickedViaDom = await btn.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const evInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', evInit)); } catch {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', evInit)); } catch {}
+    try { el.dispatchEvent(new MouseEvent('click', evInit)); } catch {}
+    try { el.click(); return true; } catch { return false; }
+  }).catch(() => false);
+  if (!clickedViaDom) {
+    const clickedViaPptr = await btn.click({ delay: 120 + Math.random() * 180 }).then(() => true).catch(() => false);
+    if (!clickedViaPptr) {
+      socket.emit('bot-log', 'Popup: gather_button click failed');
+      return false;
+    }
+  }
+  socket.emit('bot-log', `Popup: gather_button click (${info.label || 'gather'})`);
 
   // even wachten zodat gather echt start
-  await sleep(humanDelay('popup', 420, 900));
+  await sleep(humanDelay('popup', 900, 1700));
 
   const closed = await closePopupByXRetry(page, socket);
   if (closed) {
     // cooldown 12-18 sec, maar adaptief: soms iets langer
     const cd = humanDelay('resource', 12000, 18000, { afterResource: true });
     resourceCooldownUntil = Date.now() + cd;
-    socket.emit('bot-log', `⏳ Resource cooldown ${(cd / 1000).toFixed(0)}s -> focusing steps`);
+    socket.emit('bot-log', `Resource cooldown ${(cd / 1000).toFixed(0)}s -> focusing steps`);
   } else {
-    socket.emit('bot-log', '⚠️ Could not close X (still open?)');
+    socket.emit('bot-log', 'Could not close X (still open?)');
   }
 
   return true;
@@ -261,13 +278,13 @@ async function handleTravel(page, settings, sessionStats, socket) {
 
   // popup actie
   const didPopup = await clickGatherPopupButton(page, socket);
-  if (didPopup) return humanDelay('resource', 1400, 2600, { afterResource: true });
+  if (didPopup) return humanDelay('resource', 2600, 4200, { afterResource: true });
 
   // wachten op popup window
   if (now < awaitingPopupUntil) {
     const did = await waitAndClickPopup(page, socket, 1000);
-    if (did) return humanDelay('resource', 1400, 2600, { afterResource: true });
-    return humanDelay('popup', 450, 950, { quick: true });
+    if (did) return humanDelay('resource', 2600, 4200, { afterResource: true });
+    return humanDelay('popup', 900, 1600);
   }
 
   const url = page.url();
@@ -295,8 +312,8 @@ async function handleTravel(page, settings, sessionStats, socket) {
   // anti open-spam
   if (now - lastOpenAt < 2500) {
     const did = await waitAndClickPopup(page, socket, 1200);
-    if (did) return humanDelay('resource', 1400, 2600, { afterResource: true });
-    return humanDelay('popup', 520, 1050, { quick: true });
+    if (did) return humanDelay('resource', 2600, 4200, { afterResource: true });
+    return humanDelay('popup', 900, 1700);
   }
 
   // cooldown actief? dan alleen close/confirm/step
@@ -312,11 +329,15 @@ async function handleTravel(page, settings, sessionStats, socket) {
   }).catch(() => false);
 
   if (lowSkillBlocked) {
-    const cd = humanDelay('resource', 18000, 30000, { quick: true });
+    const cd = humanDelay('resource', 22000, 34000);
     resourceCooldownUntil = Date.now() + cd;
     const didStep = await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-      const vis = (b) => b && b.offsetParent !== null && !b.disabled;
+      const vis = (b) => {
+        if (!b || b.offsetParent === null || b.disabled) return false;
+        const style = window.getComputedStyle(b);
+        return style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+      };
       const txt = (b) => (b.innerText || b.textContent || '').trim().toLowerCase();
       const stp = btns.find((b) => vis(b) && txt(b).includes('take a step'));
       if (!stp) return false;
@@ -332,11 +353,11 @@ async function handleTravel(page, settings, sessionStats, socket) {
       sessionStats.steps = (sessionStats.steps || 0) + 1;
       socket.emit('bot-log', `Resource skipped: skill level too low (${Math.round(cd / 1000)}s cooldown), stepped anyway`);
       socket.emit('update-stats', sessionStats);
-      return humanDelay('step', 2200, 3800, { quick: true });
+      return humanDelay('step', 3200, 5200);
     }
 
     socket.emit('bot-log', `Resource skipped: skill level too low (${Math.round(cd / 1000)}s cooldown), no step button found`);
-    return humanDelay('step', 1800, 3200, { quick: true });
+    return humanDelay('step', 2800, 4600);
   }
 
   const result = await page.evaluate((cfg) => {
@@ -344,11 +365,20 @@ async function handleTravel(page, settings, sessionStats, socket) {
       const rect = el.getBoundingClientRect();
       const x = rect.left + (Math.random() * rect.width);
       const y = rect.top + (Math.random() * rect.height);
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
+      const evInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      try { el.dispatchEvent(new MouseEvent('mousedown', evInit)); } catch {}
+      try { el.dispatchEvent(new MouseEvent('mouseup', evInit)); } catch {}
+      try { el.dispatchEvent(new MouseEvent('click', evInit)); } catch {}
+      try { el.click(); } catch {}
     };
 
     const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-    const vis = (b) => b && b.offsetParent !== null && !b.disabled;
+    const vis = (b) => {
+      if (!b || b.offsetParent === null || b.disabled) return false;
+      const style = window.getComputedStyle(b);
+      return style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+    };
     const txt = (b) => (b.innerText || b.textContent || '').trim().toLowerCase();
     const raw = (b) => (b.innerText || b.textContent || '').trim();
 
@@ -374,7 +404,8 @@ async function handleTravel(page, settings, sessionStats, socket) {
         txt(b).includes('salvage') ||
         txt(b).includes('salvaging') ||
         txt(b).includes('harvest') ||
-        txt(b).includes('fish')
+        txt(b).includes('fish') ||
+        txt(b).includes('forage')
       ));
       if (cfg.resources && startRes) { clickHumanly(startRes); return { type: 'opening', name: raw(startRes) }; }
     }
@@ -394,25 +425,28 @@ async function handleTravel(page, settings, sessionStats, socket) {
     const did = await waitAndClickPopup(page, socket, 1600);
     if (did) {
       awaitingPopupUntil = 0;
-      return humanDelay('resource', 1400, 2600, { afterResource: true });
+      return humanDelay('resource', 2600, 4200, { afterResource: true });
     }
 
-    return humanDelay('popup', 600, 1200, { quick: true });
+    return humanDelay('popup', 1000, 2000);
   }
 
   if (result.type === 'executing') {
     socket.emit('bot-log', `Confirming: ${result.name}`);
-    return humanDelay('combat', 1400, 2500, { afterCombat: true });
+    if ((result.name || '').toLowerCase() === 'attack') {
+      return humanDelay('combat', 3600, 5600, { afterCombat: true });
+    }
+    return humanDelay('combat', 2600, 4200, { afterCombat: true });
   }
 
   if (result.type === 'close') {
     socket.emit('bot-log', `Closing: ${result.name}`);
     if (/collect loot/i.test(result.name || '')) {
-      await sleep(300);
+      await sleep(800 + Math.random() * 900);
       const emitted = await scanAndEmitLoot(page, socket, sessionStats, 'collect');
       if (emitted === 0) socket.emit('bot-log', 'Loot scan (collect): no new items found');
     }
-    return humanDelay('close', 1000, 1800);
+    return humanDelay('close', 1600, 2800);
   }
 
   if (result.type === 'step') {
@@ -423,11 +457,11 @@ async function handleTravel(page, settings, sessionStats, socket) {
   }
 
   if (result.type === 'eval_error') {
-    socket.emit('bot-log', `⚠️ Travel evaluate interrupted: ${result.name}`);
-    return humanDelay('close', 900, 1600, { afterNav: true, quick: true });
+    socket.emit('bot-log', `Travel evaluate interrupted: ${result.name}`);
+    return humanDelay('close', 1400, 2400, { afterNav: true });
   }
 
-  return humanDelay('step', 2600, 4200);
+  return humanDelay('step', 3200, 5200);
 }
 
 module.exports = { handleTravel };

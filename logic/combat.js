@@ -1,6 +1,9 @@
-// logic/combat.js — Puppeteer v24+ + silent retry bij navigation + adaptive delays
+﻿// logic/combat.js - Puppeteer v24+ + silent retry bij navigation + adaptive delays
 
 const { humanDelay } = require('./human-delay');
+
+let lastAttackClickAt = 0;
+const MIN_ATTACK_INTERVAL_MS = 5200;
 
 function isNavDestroy(err) {
   const msg = (err && err.message) ? err.message : String(err || '');
@@ -11,6 +14,20 @@ async function handleCombat(page, socket, sessionStats) {
   try {
     const url = page.url();
     const likelyCombat = url.includes('/combat') || url.includes('monster');
+    const now = Date.now();
+
+    const antiFastWarning = await page.evaluate(() => {
+      const text = (document.body?.innerText || '').toLowerCase();
+      return (
+        (text.includes('hold on') && text.includes('too fast')) ||
+        text.includes('you are going too fast') ||
+        text.includes('slow down')
+      );
+    }).catch(() => false);
+    if (antiFastWarning) {
+      socket.emit('bot-log', 'Combat throttle: anti-fast warning detected, backing off');
+      return humanDelay('combat', 7000, 12000, { afterCombat: true });
+    }
 
     const elements = await page.$$('button, a, [role="button"], .btn');
 
@@ -26,12 +43,10 @@ async function handleCombat(page, socket, sessionStats) {
       }).catch(() => false);
 
     const clickSoft = async (el) => {
-      await el.evaluate(e => e.scrollIntoView({ block: 'center' })).catch(() => {});
-      // DOM click eerst (stabiel)
-      const ok = await el.evaluate(e => { e.click(); return true; }).catch(() => false);
-      if (!ok) {
-        await el.click({ delay: 80 }).catch(() => {});
-      }
+      await el.evaluate(e => e.scrollIntoView({ block: 'center', inline: 'center' })).catch(() => {});
+      const clickedViaPuppeteer = await el.click({ delay: 120 + Math.random() * 180 }).then(() => true).catch(() => false);
+      if (clickedViaPuppeteer) return;
+      await el.evaluate((e) => { try { e.click(); } catch {} }).catch(() => {});
     };
 
     // Loot eerst, zodat drops zichtbaar worden in dashboard
@@ -47,7 +62,7 @@ async function handleCombat(page, socket, sessionStats) {
       socket.emit('new-loot', `Loot: ${textRaw}`);
       socket.emit('update-stats', sessionStats);
       socket.emit('bot-log', `Loot collected: ${textRaw}`);
-      return humanDelay('close', 900, 1600, { quick: true });
+      return humanDelay('close', 1600, 2800);
     }
 
     // Confirm/OK/Yes daarna
@@ -67,8 +82,8 @@ async function handleCombat(page, socket, sessionStats) {
       if (!(await isClickable(el))) continue;
 
       await clickSoft(el);
-      socket.emit('bot-log', '✅ Combat: confirm/ok clicked');
-      return humanDelay('combat', 900, 1800, { afterCombat: true });
+      socket.emit('bot-log', 'Combat: confirm/ok clicked');
+      return humanDelay('combat', 1800, 3200, { afterCombat: true });
     }
 
     // Attack
@@ -80,21 +95,29 @@ async function handleCombat(page, socket, sessionStats) {
       if (!isAttack) continue;
       if (!(await isClickable(el))) continue;
 
+      const sinceLastAttack = now - lastAttackClickAt;
+      if (sinceLastAttack < MIN_ATTACK_INTERVAL_MS) {
+        const waitMs = (MIN_ATTACK_INTERVAL_MS - sinceLastAttack) + Math.round(Math.random() * 900);
+        socket.emit('bot-log', `Combat throttle: waiting ${Math.round(waitMs / 1000)}s before next attack`);
+        return waitMs;
+      }
+
       await clickSoft(el);
-      socket.emit('bot-log', '⚔️ Combat: attack clicked');
+      lastAttackClickAt = Date.now();
+      socket.emit('bot-log', 'Combat: attack clicked');
 
       return likelyCombat
-        ? humanDelay('combat', 1200, 2600, { afterCombat: true })
-        : humanDelay('combat', 1600, 3200, { afterCombat: true });
+        ? humanDelay('combat', 3600, 5600, { afterCombat: true })
+        : humanDelay('combat', 4200, 6200, { afterCombat: true });
     }
 
     return 0;
   } catch (err) {
     if (isNavDestroy(err)) {
-      return humanDelay('close', 800, 1500, { afterNav: true, quick: true });
+      return humanDelay('close', 1500, 2600, { afterNav: true });
     }
     socket.emit('bot-log', 'Combat error: ' + (err?.message || String(err)));
-    return humanDelay('close', 1600, 2800);
+    return humanDelay('close', 2200, 3600);
   }
 }
 

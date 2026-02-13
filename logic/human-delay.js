@@ -61,13 +61,23 @@ function decayFatigue() {
  * type: 'step' | 'resource' | 'combat' | 'close' | 'popup' | ...
  */
 function humanDelay(type, baseMin, baseMax, opts = {}) {
+  const now = Date.now();
+  const sinceLastAction = state.lastActionAt > 0
+    ? (now - state.lastActionAt)
+    : Number.POSITIVE_INFINITY;
+
   decayFatigue();
   updateState(type);
 
-  const now = Date.now();
-
   // basis delay
   let delay = softSkew(baseMin, baseMax);
+
+  // anti-spam: rem bij extreem snelle opvolgende acties
+  if (sinceLastAction < 1800) {
+    delay += rand(700, 1800);
+  } else if (sinceLastAction < 3200) {
+    delay += rand(250, 900);
+  }
 
   // streak invloed: als je veel hetzelfde doet, soms iets trager
   if (state.streak >= 4) delay *= 1.08;
@@ -81,10 +91,10 @@ function humanDelay(type, baseMin, baseMax, opts = {}) {
   if (opts.afterResource) delay *= 1.18;
   if (opts.afterCombat) delay *= 1.10;
   if (opts.afterNav) delay *= 1.05;
-  if (opts.quick) delay *= 0.85;
+  if (opts.quick) delay *= 0.93;
 
   // micro-pause: heel klein menselijk “twijfel”-moment
-  if (should(0.22)) delay += rand(80, 420);
+  if (should(0.35)) delay += rand(120, 650);
 
   // afleiding: zelden, maar wel echt (niet te vaak)
   const canDistract = (now - state.lastDistractionAt) > 90000; // max 1x per 90s

@@ -460,12 +460,63 @@
 
   <script>
     const socket = io();
+    const UI_PREFS_KEY = 'smmohelper.ui.prefs.v1';
     let isRunning = false;
     let browserWindow = { mode: 'maximized', width: 1400, height: 900 };
     let lastStatsSeenAt = 0;
     const LOG_ROWS = 7;
     let activePanelTab = 'activity';
     let lastQuestLiveAt = 0;
+
+    function loadUiPrefs() {
+      try {
+        const raw = localStorage.getItem(UI_PREFS_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function saveUiPrefs() {
+      const prefs = {
+        combat: !!document.getElementById('combat')?.checked,
+        quests: !!document.getElementById('quests')?.checked,
+        battleEnergy: !!document.getElementById('battleEnergy')?.checked,
+        resources: !!document.getElementById('resources')?.checked,
+        browser: readWindowConfigFromUi(),
+        activeTab: activePanelTab || 'activity'
+      };
+      try {
+        localStorage.setItem(UI_PREFS_KEY, JSON.stringify(prefs));
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    function applyUiPrefs(prefs) {
+      if (!prefs || typeof prefs !== 'object') return;
+
+      if (typeof prefs.combat === 'boolean') {
+        document.getElementById('combat').checked = prefs.combat;
+      }
+      if (typeof prefs.quests === 'boolean') {
+        document.getElementById('quests').checked = prefs.quests;
+      }
+      if (typeof prefs.battleEnergy === 'boolean') {
+        document.getElementById('battleEnergy').checked = prefs.battleEnergy;
+      }
+      if (typeof prefs.resources === 'boolean') {
+        document.getElementById('resources').checked = prefs.resources;
+      }
+      if (prefs.browser && typeof prefs.browser === 'object') {
+        applyWindowConfigToUi(prefs.browser);
+      }
+      if (typeof prefs.activeTab === 'string' && ['activity', 'drops', 'quests'].includes(prefs.activeTab)) {
+        activePanelTab = prefs.activeTab;
+      }
+    }
 
     setInterval(() => {
       const label = document.getElementById('lastSync');
@@ -523,6 +574,7 @@
         if (tab) tab.classList.toggle('active', id === tabId);
         if (panel) panel.classList.toggle('active', id === tabId);
       });
+      saveUiPrefs();
     }
 
     function fmt(val, fallback = '-') {
@@ -765,16 +817,25 @@
 
     document.getElementById('browserMode').onchange = () => {
       applyWindowConfigToUi(readWindowConfigFromUi());
+      saveUiPrefs();
     };
     document.getElementById('browserWidth').oninput = () => {
       document.getElementById('browserMode').value = 'windowed';
+      saveUiPrefs();
     };
     document.getElementById('browserHeight').oninput = () => {
       document.getElementById('browserMode').value = 'windowed';
+      saveUiPrefs();
     };
+
+    document.getElementById('combat').onchange = saveUiPrefs;
+    document.getElementById('quests').onchange = saveUiPrefs;
+    document.getElementById('battleEnergy').onchange = saveUiPrefs;
+    document.getElementById('resources').onchange = saveUiPrefs;
 
     document.getElementById('btn-apply-window').onclick = () => {
       sendWindowConfig();
+      saveUiPrefs();
     };
 
     document.getElementById('btn-browser').onclick = () => {
@@ -800,9 +861,10 @@
     document.getElementById('tab-drops').onclick = () => setPanelTab('drops');
     document.getElementById('tab-quests').onclick = () => setPanelTab('quests');
 
+    applyUiPrefs(loadUiPrefs());
     ensureRows('drops', 'Waiting for loot...');
     ensureRows('log', 'Waiting for activity...');
-    setPanelTab('activity');
+    setPanelTab(activePanelTab || 'activity');
   </script>
 </body>
 </html>

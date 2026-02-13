@@ -10,6 +10,7 @@ const botModule = require('./logic/bot-logic');
 const startLoop = botModule.startLoop || botModule.startBotLoop;
 const stopLoop = botModule.stopLoop || botModule.stopBotLoop || (() => {});
 const getLoopRunningState = botModule.isBotRunning || botModule.isRunning || (() => false);
+const isCaptchaPauseActive = botModule.isCaptchaPauseActive || (() => false);
 
 if (typeof startLoop !== 'function') {
   console.error('logic/bot-logic.js is missing export: startLoop() or startBotLoop()');
@@ -94,7 +95,7 @@ function requireController(socket, actionLabel) {
   return false;
 }
 
-async function cleanupRuntime(reason, socket) {
+async function cleanupRuntime(reason, socket, opts = {}) {
   if (cleanupInProgress) {
     return cleanupInProgress;
   }
@@ -118,7 +119,16 @@ async function cleanupRuntime(reason, socket) {
         io.emit('bot-log', reason);
       }
 
-      await closeBrowser(socket);
+      const skipBrowserClose = !!opts.skipBrowserClose;
+      if (skipBrowserClose) {
+        if (socket) {
+          socket.emit('bot-log', 'Browser remains open for manual captcha solving');
+        } else {
+          io.emit('bot-log', 'Browser remains open for manual captcha solving');
+        }
+      } else {
+        await closeBrowser(socket);
+      }
     } catch (err) {
       console.error('[cleanup runtime]', err);
     } finally {
@@ -248,15 +258,20 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     clearInterval(statsInterval);
     console.log('Dashboard disconnected');
+    const keepBrowserOpenForCaptcha = isCaptchaPauseActive();
 
     if (isController(socket)) {
       controllerSocketId = null;
-      cleanupRuntime('Controller client disconnected; bot and browser stopped cleanly');
+      cleanupRuntime('Controller client disconnected; bot stopped cleanly', null, {
+        skipBrowserClose: keepBrowserOpenForCaptcha
+      });
     }
 
     if (io.engine.clientsCount === 0) {
       controllerSocketId = null;
-      cleanupRuntime('Last dashboard client disconnected; bot and browser stopped cleanly');
+      cleanupRuntime('Last dashboard client disconnected; bot stopped cleanly', null, {
+        skipBrowserClose: keepBrowserOpenForCaptcha
+      });
     }
   });
 });

@@ -1,6 +1,7 @@
 // logic/battle-energy.js - compact battle arena state machine
 
 const { humanDelay } = require('./human-delay');
+const { clickHandle } = require('./click-utils');
 
 const PHASE = {
   MENU: 'menu',
@@ -14,13 +15,17 @@ const state = {
   phase: PHASE.MENU,
   generateMisses: 0,
   fightMisses: 0,
-  lastArenaRecoverAt: 0
+  lastArenaRecoverAt: 0,
+  lastBattleContextSeenAt: 0
 };
 
 function resetPhaseState(nextPhase = PHASE.MENU) {
   state.phase = nextPhase;
   state.generateMisses = 0;
   state.fightMisses = 0;
+  if (nextPhase === PHASE.MENU) {
+    state.lastBattleContextSeenAt = 0;
+  }
 }
 
 function getEnergyState(stats) {
@@ -57,17 +62,7 @@ function shouldRunBattleBurst(stats, burstActive, socket) {
 }
 
 async function clickHandleRobust(handle) {
-  if (!handle) return false;
-  await handle.evaluate((el) => {
-    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-  }).catch(() => {});
-
-  const clickedViaPuppeteer = await handle.click({ delay: 120 + Math.random() * 160 }).then(() => true).catch(() => false);
-  if (clickedViaPuppeteer) return true;
-
-  return await handle.evaluate((el) => {
-    try { el.click(); return true; } catch { return false; }
-  }).catch(() => false);
+  return await clickHandle(handle, { minDelay: 120, maxDelay: 280 });
 }
 
 async function findBattleNpcHandle(page) {
@@ -145,6 +140,73 @@ async function findBattleEnterHandle(page) {
   return null;
 }
 
+async function findBattleAttackHandle(page) {
+  const handles = await page.$$('button, a, [role="button"], .btn, input[type="submit"], input[type="button"]');
+  for (const h of handles) {
+    const ok = await h.evaluate((el) => {
+      if (!el || el.disabled) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+
+      const txt = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
+      if (txt !== 'attack') return false;
+      if (txt.includes('special attack') || txt.includes('use item')) return false;
+
+      const attrs = el.getAttributeNames ? el.getAttributeNames() : [];
+      const hasAttackFalse = attrs.some((name) => {
+        const v = String(el.getAttribute(name) || '').toLowerCase().replace(/\s+/g, '');
+        return v.includes('attack(false');
+      });
+
+      return hasAttackFalse || txt === 'attack';
+    }).catch(() => false);
+    if (ok) return h;
+  }
+  return null;
+}
+
+async function findQuickGenerateHandle(page) {
+  const handles = await page.$$('button, a, [role="button"], .btn');
+  for (const h of handles) {
+    const ok = await h.evaluate((el) => {
+      if (!el || el.disabled) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+
+      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+      const attrs = el.getAttributeNames ? el.getAttributeNames() : [];
+      const hasQuickGenerate = attrs.some((name) =>
+        String(el.getAttribute(name) || '').toLowerCase().replace(/\s+/g, '').includes('quickgenerate(')
+      );
+
+      return hasQuickGenerate || txt.includes('generate next opponent');
+    }).catch(() => false);
+    if (ok) return h;
+  }
+  return null;
+}
+
+async function findContinueHandle(page) {
+  const handles = await page.$$('button, a, [role="button"], .btn');
+  for (const h of handles) {
+    const ok = await h.evaluate((el) => {
+      if (!el || el.disabled) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+      return txt === 'continue' || txt === 'ok' || txt === 'yes' || txt.includes('continue');
+    }).catch(() => false);
+    if (ok) return h;
+  }
+  return null;
+}
+
 async function clickAttackDirect(page) {
   return await page.evaluate(() => {
     const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], .btn, input[type="submit"], input[type="button"]'));
@@ -167,10 +229,90 @@ async function clickAttackDirect(page) {
   }).catch(() => false);
 }
 
+async function clickAttackExactAcrossFrames(page) {
+  const lower = 'abcdefghijklmnopqrstuvwxyz';
+  const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const frames = page.frames ? page.frames() : [page.mainFrame?.()].filter(Boolean);
+
+  for (const frame of frames) {
+    const candidates = await frame.$x(
+      `//button[normalize-space()='Attack'] | //a[normalize-space()='Attack'] | //*[@role='button' and normalize-space()='Attack'] | //input[translate(normalize-space(@value), '${upper}', '${lower}')='attack']`
+    ).catch(() => []);
+
+    for (const h of candidates) {
+      try {
+        const isOk = await h.evaluate((el) => {
+          if (!el || el.disabled) return false;
+          const style = window.getComputedStyle(el);
+          if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        }).catch(() => false);
+        if (!isOk) {
+          await h.dispose().catch(() => {});
+          continue;
+        }
+        const clicked = await clickHandleRobust(h);
+        await h.dispose().catch(() => {});
+        if (clicked) return true;
+      } catch {
+        await h.dispose().catch(() => {});
+      }
+    }
+  }
+
+  return false;
+}
+
+async function clickAttackByTextProbe(page) {
+  return await page.evaluate(() => {
+    const isVisible = (el) => {
+      if (!el || el.disabled) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const all = Array.from(document.querySelectorAll('*')).slice(0, 1500);
+    for (const el of all) {
+      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+      if (!txt) continue;
+      if (txt !== 'attack') continue;
+      if (txt.includes('special attack') || txt.includes('use item')) continue;
+
+      let clickable = el;
+      let depth = 0;
+      while (clickable && depth < 6) {
+        const tag = (clickable.tagName || '').toLowerCase();
+        const role = (clickable.getAttribute && clickable.getAttribute('role')) || '';
+        const cls = (clickable.className || '').toString().toLowerCase();
+        if (
+          tag === 'button' ||
+          tag === 'a' ||
+          role === 'button' ||
+          cls.includes('btn') ||
+          !!clickable.onclick ||
+          !!(clickable.getAttribute && (clickable.getAttribute('x-on:click') || clickable.getAttribute('@click')))
+        ) {
+          break;
+        }
+        clickable = clickable.parentElement;
+        depth += 1;
+      }
+
+      if (!clickable || !isVisible(clickable)) continue;
+      try { clickable.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      try { clickable.click(); return true; } catch {}
+    }
+
+    return false;
+  }).catch(() => false);
+}
+
 async function clickFightAction(page) {
   const handles = await page.$$('button, a, [role="button"], .btn, input[type="submit"], input[type="button"]');
   let confirm = null;
-  let close = null;
 
   for (const h of handles) {
     const info = await h.evaluate((el) => {
@@ -184,12 +326,13 @@ async function clickFightAction(page) {
     }).catch(() => null);
     if (!info) continue;
 
-    if (!close && (info.txt.includes('leave') || info.txt.includes('close'))) {
-      close = h;
+    if (info.txt.includes('leave') || info.txt.includes('close')) continue;
+    if (/back|cancel|return/.test(info.txt)) continue;
+    if (info.txt === 'attack') {
+      if (await clickHandleRobust(h)) return 'attack';
       continue;
     }
-    if (/back|cancel|return/.test(info.txt)) continue;
-    if (info.txt === 'attack' || info.txt.includes('attack')) {
+    if (info.txt.includes('attack') && !info.txt.includes('special attack')) {
       if (await clickHandleRobust(h)) return 'attack';
       continue;
     }
@@ -198,7 +341,6 @@ async function clickFightAction(page) {
     }
   }
 
-  if (close && await clickHandleRobust(close)) return 'close';
   if (confirm && await clickHandleRobust(confirm)) return 'confirm';
   return 'none';
 }
@@ -289,22 +431,43 @@ async function handlePhaseBattleEnter(page, socket) {
   }
 
   resetPhaseState(PHASE.FIGHT);
+  state.lastBattleContextSeenAt = Date.now();
   socket?.emit('bot-log', 'Battle burst: Battle clicked');
   return humanDelay('combat', 2600, 4200, { afterCombat: true });
 }
 
 async function handlePhaseFight(page, socket) {
+  const quickGenerateBtn = await findQuickGenerateHandle(page);
+  if (quickGenerateBtn && await clickHandleRobust(quickGenerateBtn)) {
+    state.fightMisses = 0;
+    resetPhaseState(PHASE.BATTLE_ENTER);
+    socket?.emit('bot-log', 'Battle burst: Generate Next Opponent clicked');
+    return humanDelay('combat', 2400, 3800, { afterCombat: true });
+  }
+
+  const exactAttackBtn = await findBattleAttackHandle(page);
+  if (exactAttackBtn && await clickHandleRobust(exactAttackBtn)) {
+    state.fightMisses = 0;
+    socket?.emit('bot-log', 'Battle burst: Attack clicked (attack(false))');
+    return humanDelay('combat', 3000, 4600, { afterCombat: true });
+  }
+
+  if (await clickAttackExactAcrossFrames(page)) {
+    state.fightMisses = 0;
+    socket?.emit('bot-log', 'Battle burst: Attack clicked (exact/frame)');
+    return humanDelay('combat', 3000, 4600, { afterCombat: true });
+  }
+
   if (await clickAttackDirect(page)) {
     state.fightMisses = 0;
     socket?.emit('bot-log', 'Battle burst: Attack clicked (direct)');
     return humanDelay('combat', 3000, 4600, { afterCombat: true });
   }
 
-  const retryBattleBtn = await findBattleEnterHandle(page);
-  if (retryBattleBtn && await clickHandleRobust(retryBattleBtn)) {
+  if (await clickAttackByTextProbe(page)) {
     state.fightMisses = 0;
-    socket?.emit('bot-log', 'Battle burst: Battle clicked (retry for attack state)');
-    return humanDelay('combat', 2200, 3600, { afterCombat: true });
+    socket?.emit('bot-log', 'Battle burst: Attack clicked (text probe)');
+    return humanDelay('combat', 3000, 4600, { afterCombat: true });
   }
 
   const action = await clickFightAction(page);
@@ -318,19 +481,13 @@ async function handlePhaseFight(page, socket) {
     socket?.emit('bot-log', 'Battle burst: Continue clicked');
     return humanDelay('combat', 2600, 4200, { afterCombat: true });
   }
-  if (action === 'close') {
-    resetPhaseState(PHASE.MENU);
-    socket?.emit('bot-log', 'Battle burst: Leave/Close clicked, next NPC');
-    return humanDelay('close', 1800, 3000, { afterCombat: true });
-  }
-
   state.fightMisses += 1;
   if (state.fightMisses % 4 === 1) {
-    socket?.emit('bot-log', `Battle burst: waiting for attack state (miss ${state.fightMisses})`);
+    socket?.emit('bot-log', `Battle burst: waiting for attack state (miss ${state.fightMisses}) @ ${page.url()}`);
   }
-  if (state.fightMisses >= 14) {
-    resetPhaseState(PHASE.MENU);
-    socket?.emit('bot-log', 'Battle burst: fight stalled, restarting NPC cycle');
+  if (state.fightMisses >= 20) {
+    resetPhaseState(PHASE.BATTLE_ENTER);
+    socket?.emit('bot-log', 'Battle burst: fight stalled, retrying Battle entry');
   }
   return humanDelay('combat', 2200, 3600);
 }
@@ -343,12 +500,39 @@ const PHASE_HANDLERS = {
   [PHASE.FIGHT]: handlePhaseFight
 };
 
+function isBattleContextUrl(url) {
+  const u = String(url || '').toLowerCase();
+  return (
+    u.includes('/battle') ||
+    u.includes('/combat') ||
+    u.includes('/monster/attack')
+  );
+}
+
 async function handleBattleEnergy(page, socket, sessionStats) {
   try {
+    const now = Date.now();
     const currentUrl = page.url();
-    if (!currentUrl.includes('/battle')) {
+    const inBattleContext = isBattleContextUrl(currentUrl);
+    if (inBattleContext) {
+      state.lastBattleContextSeenAt = now;
+    }
+
+    if (!inBattleContext) {
+      // Na "Battle clicked" kan URL kort onstabiel zijn; niet meteen hard recoveren.
+      const recentlyInBattle = state.lastBattleContextSeenAt > 0 && (now - state.lastBattleContextSeenAt) < 12000;
+      if (state.phase === PHASE.FIGHT || state.phase === PHASE.BATTLE_ENTER || recentlyInBattle) {
+        if (state.fightMisses % 4 === 0) {
+          socket?.emit('bot-log', `Battle burst: transient URL outside battle, holding phase (${state.phase}) @ ${currentUrl}`);
+        }
+        state.fightMisses += 1;
+        if (state.phase === PHASE.BATTLE_ENTER) {
+          state.phase = PHASE.FIGHT;
+        }
+        return humanDelay('combat', 1800, 3000, { afterNav: true });
+      }
+
       resetPhaseState(PHASE.MENU);
-      const now = Date.now();
       if (now - state.lastArenaRecoverAt > 15000) {
         state.lastArenaRecoverAt = now;
         socket?.emit('bot-log', 'Battle burst active: recovering to /battle/arena');
@@ -360,8 +544,85 @@ async function handleBattleEnergy(page, socket, sessionStats) {
       return humanDelay('combat', 2400, 3600, { afterNav: true });
     }
 
-    const handler = PHASE_HANDLERS[state.phase] || handlePhaseMenu;
-    return await handler(page, socket, sessionStats);
+    if (String(currentUrl).toLowerCase().includes('/combat') && state.phase !== PHASE.FIGHT) {
+      state.phase = PHASE.FIGHT;
+      state.fightMisses = 0;
+      socket?.emit('bot-log', 'Battle burst: combat page detected -> switching to fight phase');
+    }
+
+    // Deterministische knop-prioriteit (voorkomt "gek" menu-gedrag):
+    // 1) Quick-generate (win scherm), 2) Attack, 3) Continue/OK,
+    // 4) Battle, 5) Generate, 6) Generate Enemy, 7) Battle NPCs
+    const quickGenerateBtn = await findQuickGenerateHandle(page);
+    if (quickGenerateBtn && await clickHandleRobust(quickGenerateBtn)) {
+      state.fightMisses = 0;
+      resetPhaseState(PHASE.BATTLE_ENTER);
+      socket?.emit('bot-log', 'Battle burst: Generate Next Opponent clicked');
+      return humanDelay('combat', 2200, 3600, { afterCombat: true });
+    }
+
+    const attackBtn = await findBattleAttackHandle(page);
+    if (attackBtn && await clickHandleRobust(attackBtn)) {
+      state.fightMisses = 0;
+      state.phase = PHASE.FIGHT;
+      socket?.emit('bot-log', 'Battle burst: Attack clicked (attack(false))');
+      return humanDelay('combat', 3000, 4600, { afterCombat: true });
+    }
+
+    const continueBtn = await findContinueHandle(page);
+    if (continueBtn && await clickHandleRobust(continueBtn)) {
+      state.fightMisses = 0;
+      state.phase = PHASE.FIGHT;
+      socket?.emit('bot-log', 'Battle burst: Continue clicked');
+      return humanDelay('combat', 2200, 3600, { afterCombat: true });
+    }
+
+    const battleBtn = await findBattleEnterHandle(page);
+    if (battleBtn && await clickHandleRobust(battleBtn)) {
+      state.fightMisses = 0;
+      resetPhaseState(PHASE.FIGHT);
+      state.lastBattleContextSeenAt = Date.now();
+      socket?.emit('bot-log', 'Battle burst: Battle clicked');
+      return humanDelay('combat', 2400, 3800, { afterCombat: true });
+    }
+
+    const generateConfirmBtn = await findGenerateConfirmHandle(page);
+    if (generateConfirmBtn && await clickHandleRobust(generateConfirmBtn)) {
+      state.generateMisses = 0;
+      resetPhaseState(PHASE.BATTLE_ENTER);
+      sessionStats.energy = Math.max(0, Number(sessionStats.energy || 0) - 1);
+      if (Number(sessionStats.max_energy || 0) > 0) {
+        sessionStats.energy_percent = Math.max(0, Math.min(100, (Number(sessionStats.energy) / Number(sessionStats.max_energy)) * 100));
+      }
+      socket?.emit('bot-log', 'Battle burst: Generate clicked -> waiting for Battle');
+      return humanDelay('combat', 2200, 3600, { afterCombat: true });
+    }
+
+    const generateEnemyBtn = await findGenerateEnemyHandle(page);
+    if (generateEnemyBtn && await clickHandleRobust(generateEnemyBtn)) {
+      state.generateMisses = 0;
+      resetPhaseState(PHASE.GENERATE_CONFIRM);
+      socket?.emit('bot-log', 'Battle burst: Generate Enemy clicked -> waiting for Generate');
+      return humanDelay('combat', 2200, 3600, { afterCombat: true });
+    }
+
+    const npcBtn = await findBattleNpcHandle(page);
+    if (npcBtn && await clickHandleRobust(npcBtn)) {
+      state.generateMisses = 0;
+      resetPhaseState(PHASE.GENERATE_OPEN);
+      socket?.emit('bot-log', 'Battle burst: Battle NPCs clicked -> waiting for Generate Enemy');
+      return humanDelay('combat', 2200, 3600, { afterCombat: true });
+    }
+
+    state.fightMisses += 1;
+    if (state.fightMisses % 5 === 1) {
+      socket?.emit('bot-log', `Battle burst: no target button found (phase=${state.phase}) @ ${currentUrl}`);
+    }
+    if (state.fightMisses >= 18) {
+      resetPhaseState(PHASE.MENU);
+      socket?.emit('bot-log', 'Battle burst: stalled, resetting to menu phase');
+    }
+    return humanDelay('combat', 1800, 3000);
   } catch (err) {
     socket?.emit('bot-log', `Battle burst error: ${err.message}`);
     return humanDelay('combat', 3000, 4800, { afterNav: true });

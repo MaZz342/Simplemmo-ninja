@@ -2,6 +2,7 @@
 
 const { checkCaptcha } = require('./captcha');
 const { humanDelay } = require('./human-delay');
+const { clickHandle } = require('./click-utils');
 
 // mini-state
 let lastOpenAt = 0;
@@ -25,46 +26,67 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+async function getHandleInfo(handle) {
+  return await handle.evaluate((el) => {
+    const style = window.getComputedStyle(el);
+    const raw = (el.innerText || el.textContent || '').trim();
+    const lower = raw.toLowerCase();
+    const visible = el.offsetParent !== null && style.visibility !== 'hidden' && style.pointerEvents !== 'none';
+    const disabled = !!(
+      el.disabled ||
+      el.getAttribute('aria-disabled') === 'true' ||
+      el.hasAttribute('disabled')
+    );
+    return { raw, lower, visible, disabled };
+  }).catch(() => ({ raw: '', lower: '', visible: false, disabled: true }));
+}
+
+async function findAndClick(page, predicate, opts = {}) {
+  const handles = await page.$$('button, a, .btn, [role="button"]');
+  for (const handle of handles) {
+    const info = await getHandleInfo(handle);
+    if (!info.visible || info.disabled) {
+      await handle.dispose().catch(() => {});
+      continue;
+    }
+
+    let match = false;
+    try {
+      match = !!predicate(info);
+    } catch {
+      match = false;
+    }
+    if (!match) {
+      await handle.dispose().catch(() => {});
+      continue;
+    }
+
+    const clicked = await clickHandle(handle, opts.click || {});
+    await handle.dispose().catch(() => {});
+    if (clicked) return { clicked: true, info };
+  }
+  return { clicked: false, info: null };
+}
+
 async function closePopupByX(page, socket) {
-  const clicked = await page.evaluate(() => {
-    const X_PATH_D = 'M6 18 18 6M6 6l12 12';
+  const X_PATH_D = 'M6 18 18 6M6 6l12 12';
+  const pathHandles = await page.$$(`svg path[d="${X_PATH_D}"]`);
 
-    const isVisible = (el) => {
-      if (!el) return false;
-      const style = window.getComputedStyle(el);
-      return el.offsetParent !== null && style.pointerEvents !== 'none' && style.visibility !== 'hidden';
-    };
+  for (const pathHandle of pathHandles) {
+    const candidateHandle = await pathHandle.evaluateHandle((p) => {
+      const isClickable = (el) => {
+        if (!el) return false;
+        const tag = (el.tagName || '').toLowerCase();
+        if (tag === 'button' || tag === 'a') return true;
+        if (el.getAttribute && el.getAttribute('role') === 'button') return true;
+        if (el.onclick) return true;
+        if (el.getAttribute) {
+          if (el.getAttribute('x-on:click')) return true;
+          if (el.getAttribute('@click')) return true;
+        }
+        return false;
+      };
 
-    const isClickable = (el) => {
-      if (!el) return false;
-      const tag = (el.tagName || '').toLowerCase();
-      if (tag === 'button' || tag === 'a') return true;
-      if (el.getAttribute && el.getAttribute('role') === 'button') return true;
-      if (el.onclick) return true;
-      if (el.getAttribute) {
-        if (el.getAttribute('x-on:click')) return true;
-        if (el.getAttribute('@click')) return true;
-      }
-      return false;
-    };
-
-    const clickHard = (el) => {
-      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-      try { el.click(); } catch {}
-
-      const rect = el.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
-      const evInit = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
-      try { el.dispatchEvent(new MouseEvent('mousedown', evInit)); } catch {}
-      try { el.dispatchEvent(new MouseEvent('mouseup', evInit)); } catch {}
-      try { el.dispatchEvent(new MouseEvent('click', evInit)); } catch {}
-    };
-
-    const paths = Array.from(document.querySelectorAll(`svg path[d="${X_PATH_D}"]`));
-    if (paths.length === 0) return { ok: false };
-
-    for (const p of paths) {
       let candidate =
         p.closest('button') ||
         p.closest('a') ||
@@ -74,26 +96,37 @@ async function closePopupByX(page, socket) {
         let cur = p.parentElement;
         let steps = 0;
         while (cur && steps < 10) {
-          if (isClickable(cur)) { candidate = cur; break; }
+          if (isClickable(cur)) {
+            candidate = cur;
+            break;
+          }
           cur = cur.parentElement;
           steps++;
         }
       }
+      return candidate || null;
+    }).catch(() => null);
 
-      if (!candidate) continue;
-      if (!isVisible(candidate)) continue;
-
-      clickHard(candidate);
-      return { ok: true, tag: candidate.tagName };
+    const candidate = candidateHandle && candidateHandle.asElement ? candidateHandle.asElement() : null;
+    if (candidate) {
+      const info = await getHandleInfo(candidate);
+      if (info.visible) {
+        const clicked = await clickHandle(candidate, { minDelay: 100, maxDelay: 260 });
+        await candidate.dispose().catch(() => {});
+        await candidateHandle.dispose().catch(() => {});
+        await pathHandle.dispose().catch(() => {});
+        if (clicked) {
+          socket.emit('bot-log', 'Popup closed (X)');
+          await sleep(humanDelay('close', 450, 900));
+          return true;
+        }
+      } else {
+        await candidate.dispose().catch(() => {});
+      }
     }
 
-    return { ok: false };
-  }).catch(() => ({ ok: false }));
-
-  if (clicked && clicked.ok) {
-    socket.emit('bot-log', `Popup closed (X) [${clicked.tag || 'clicked'}]`);
-    await sleep(humanDelay('close', 450, 900));
-    return true;
+    if (candidateHandle) await candidateHandle.dispose().catch(() => {});
+    await pathHandle.dispose().catch(() => {});
   }
   return false;
 }
@@ -136,16 +169,10 @@ async function clickGatherPopupButton(page, socket) {
     return true;
   }
 
-  const clickedViaPptr = await btn.click({ delay: 120 + Math.random() * 180 }).then(() => true).catch(() => false);
-  if (!clickedViaPptr) {
-    const clickedViaDom = await btn.evaluate((el) => {
-      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-      try { el.click(); return true; } catch { return false; }
-    }).catch(() => false);
-    if (!clickedViaDom) {
-      socket.emit('bot-log', 'Popup: gather_button click failed');
-      return false;
-    }
+  const clicked = await clickHandle(btn, { minDelay: 120, maxDelay: 300 });
+  if (!clicked) {
+    socket.emit('bot-log', 'Popup: gather_button click failed');
+    return false;
   }
   lastGatherActionAt = Date.now();
   socket.emit('bot-log', `Popup: gather_button click (${info.label || 'gather'})`);
@@ -332,23 +359,12 @@ async function handleTravel(page, settings, sessionStats, socket) {
   if (lowSkillBlocked) {
     const cd = humanDelay('resource', 22000, 34000);
     resourceCooldownUntil = Date.now() + cd;
-    const didStep = await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-      const vis = (b) => {
-        if (!b || b.offsetParent === null || b.disabled) return false;
-        const style = window.getComputedStyle(b);
-        return style.visibility !== 'hidden' && style.pointerEvents !== 'none';
-      };
-      const txt = (b) => (b.innerText || b.textContent || '').trim().toLowerCase();
-      const stp = btns.find((b) => vis(b) && txt(b).includes('take a step'));
-      if (!stp) return false;
-
-      const rect = stp.getBoundingClientRect();
-      const x = rect.left + (Math.random() * rect.width);
-      const y = rect.top + (Math.random() * rect.height);
-      stp.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y }));
-      return true;
-    }).catch(() => false);
+    const stepClick = await findAndClick(
+      page,
+      (b) => b.lower.includes('take a step'),
+      { click: { minDelay: 120, maxDelay: 300 } }
+    );
+    const didStep = !!stepClick.clicked;
 
     if (didStep) {
       sessionStats.steps = (sessionStats.steps || 0) + 1;
@@ -361,55 +377,73 @@ async function handleTravel(page, settings, sessionStats, socket) {
     return humanDelay('step', 2000, 3400);
   }
 
-  const result = await page.evaluate((cfg) => {
-    const clickHumanly = (el) => {
-      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-      try { el.click(); return true; } catch { return false; }
-    };
+  let result = { type: 'none' };
 
-    const btns = Array.from(document.querySelectorAll('button, a, .btn, [role="button"]'));
-    const vis = (b) => {
-      if (!b || b.offsetParent === null || b.disabled) return false;
-      const style = window.getComputedStyle(b);
-      return style.visibility !== 'hidden' && style.pointerEvents !== 'none';
-    };
-    const txt = (b) => (b.innerText || b.textContent || '').trim().toLowerCase();
-    const raw = (b) => (b.innerText || b.textContent || '').trim();
-
-    // Confirm
-    const confirmAtk = btns.find(b => vis(b) && txt(b) === 'attack');
-    const confirmGather = btns.find(b => vis(b) && txt(b).includes('click here to gather'));
-    if (cfg.combat && confirmAtk && clickHumanly(confirmAtk)) { return { type: 'executing', name: 'Attack' }; }
-    if (cfg.resources && confirmGather && clickHumanly(confirmGather)) { return { type: 'executing', name: 'Click here to gather' }; }
-
-    // Close/collect/continue/back
-    const cls = btns.find(b => vis(b) && /leave|close|continue|back to travel|collect loot/i.test(raw(b)));
-    if (cls && clickHumanly(cls)) { return { type: 'close', name: raw(cls) }; }
-
-    // Open/start resource (alleen als niet in cooldown)
-    // Prioriteit boven "take a step", zodat catch/salvage op travel niet gemist worden.
-    if (!cfg.__cooldown) {
-      const startRes = btns.find(b => vis(b) && (
-        txt(b).includes('gather') ||
-        txt(b).includes('mine') ||
-        txt(b).includes('chop') ||
-        txt(b).includes('catch') ||
-        txt(b).includes('catching') ||
-        txt(b).includes('salvage') ||
-        txt(b).includes('salvaging') ||
-        txt(b).includes('harvest') ||
-        txt(b).includes('fish') ||
-        txt(b).includes('forage')
-      ));
-      if (cfg.resources && startRes && clickHumanly(startRes)) { return { type: 'opening', name: raw(startRes) }; }
+  if (settings.combat) {
+    const confirmAtk = await findAndClick(
+      page,
+      (b) => b.lower === 'attack',
+      { click: { minDelay: 120, maxDelay: 300 } }
+    );
+    if (confirmAtk.clicked) {
+      result = { type: 'executing', name: confirmAtk.info.raw || 'Attack' };
     }
+  }
 
-    // Step (fallback)
-    const stp = btns.find(b => vis(b) && txt(b).includes('take a step'));
-    if (stp && clickHumanly(stp)) { return { type: 'step' }; }
+  if (result.type === 'none' && settings.resources) {
+    const confirmGather = await findAndClick(
+      page,
+      (b) => b.lower.includes('click here to gather'),
+      { click: { minDelay: 120, maxDelay: 300 } }
+    );
+    if (confirmGather.clicked) {
+      result = { type: 'executing', name: confirmGather.info.raw || 'Click here to gather' };
+    }
+  }
 
-    return { type: 'none' };
-  }, { ...settings, __cooldown: cooldownActive }).catch((e) => ({ type: 'eval_error', name: e.message }));
+  if (result.type === 'none') {
+    const closeAction = await findAndClick(
+      page,
+      (b) => /leave|close|continue|back to travel|collect loot/i.test(b.raw || ''),
+      { click: { minDelay: 130, maxDelay: 320 } }
+    );
+    if (closeAction.clicked) {
+      result = { type: 'close', name: closeAction.info.raw || 'Close' };
+    }
+  }
+
+  if (result.type === 'none' && !cooldownActive && settings.resources) {
+    const openResource = await findAndClick(
+      page,
+      (b) => (
+        b.lower.includes('gather') ||
+        b.lower.includes('mine') ||
+        b.lower.includes('chop') ||
+        b.lower.includes('catch') ||
+        b.lower.includes('catching') ||
+        b.lower.includes('salvage') ||
+        b.lower.includes('salvaging') ||
+        b.lower.includes('harvest') ||
+        b.lower.includes('fish') ||
+        b.lower.includes('forage')
+      ),
+      { click: { minDelay: 140, maxDelay: 340 } }
+    );
+    if (openResource.clicked) {
+      result = { type: 'opening', name: openResource.info.raw || 'Resource' };
+    }
+  }
+
+  if (result.type === 'none') {
+    const stepAction = await findAndClick(
+      page,
+      (b) => b.lower.includes('take a step'),
+      { click: { minDelay: 120, maxDelay: 300 } }
+    );
+    if (stepAction.clicked) {
+      result = { type: 'step' };
+    }
+  }
 
   if (result.type === 'opening') {
     lastOpenAt = Date.now();
@@ -452,11 +486,6 @@ async function handleTravel(page, settings, sessionStats, socket) {
     socket.emit('bot-log', `Step ${sessionStats.steps} taken`);
     socket.emit('update-stats', sessionStats);
     return humanDelay('step', 2200, 4000);
-  }
-
-  if (result.type === 'eval_error') {
-    socket.emit('bot-log', `Travel evaluate interrupted: ${result.name}`);
-    return humanDelay('close', 1400, 2400, { afterNav: true });
   }
 
   return humanDelay('step', 2000, 3600);

@@ -1,6 +1,7 @@
 ﻿// logic/combat.js - Puppeteer v24+ + silent retry bij navigation + adaptive delays
 
 const { humanDelay } = require('./human-delay');
+const { clickHandle, scrollIntoView } = require('./click-utils');
 
 let lastAttackClickAt = 0;
 const MIN_ATTACK_INTERVAL_MS = 5200;
@@ -43,10 +44,8 @@ async function handleCombat(page, socket, sessionStats) {
       }).catch(() => false);
 
     const clickSoft = async (el) => {
-      await el.evaluate(e => e.scrollIntoView({ block: 'center', inline: 'center' })).catch(() => {});
-      const clickedViaPuppeteer = await el.click({ delay: 120 + Math.random() * 180 }).then(() => true).catch(() => false);
-      if (clickedViaPuppeteer) return;
-      await el.evaluate((e) => { try { e.click(); } catch {} }).catch(() => {});
+      await scrollIntoView(el);
+      await clickHandle(el, { minDelay: 120, maxDelay: 300 });
     };
 
     // Loot eerst, zodat drops zichtbaar worden in dashboard

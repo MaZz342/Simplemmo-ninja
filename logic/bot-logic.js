@@ -4,6 +4,7 @@ let loopTimeout = null;
 let isRunning = false;
 let questBurstActive = false;
 let battleBurstActive = false;
+let captchaPauseActive = false;
 let lastQuestWaitLogAt = 0;
 let lastBattleWaitLogAt = 0;
 const MIN_LOOP_DELAY_MS = 1500;
@@ -61,6 +62,7 @@ function startBotLoop(socket, page, settings, sessionStats) {
   }
 
   isRunning = true;
+  captchaPauseActive = false;
   questBurstActive = false;
   battleBurstActive = false;
   lastQuestWaitLogAt = 0;
@@ -75,6 +77,7 @@ function startBotLoop(socket, page, settings, sessionStats) {
       const stats = sessionStats || { steps: 0, items: 0 };
 
       if (await checkCaptcha(page)) {
+        captchaPauseActive = true;
         const msg = 'CAPTCHA / anti-bot detected -> bot was stopped (solve this manually)';
         socket.emit('bot-log', msg);
 
@@ -166,8 +169,13 @@ function isBotRunning() {
   return isRunning;
 }
 
+function isCaptchaPauseActive() {
+  return captchaPauseActive;
+}
+
 module.exports = {
   startBotLoop,
   stopBotLoop,
-  isBotRunning
+  isBotRunning,
+  isCaptchaPauseActive
 };

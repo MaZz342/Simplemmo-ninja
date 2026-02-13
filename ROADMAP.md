@@ -1,10 +1,12 @@
 # Roadmap
 
 ## Meest Logisch Eerst
-1. Battle-flow state machine afronden en stabiliseren (`logic/battle-energy.js`).
-2. Click-engine centraliseren in gedeelde helper(s) voor travel/combat/battle.
-3. Settings persistence in UI (`public/index.html`, localStorage).
-4. `browser.js` opsplitsen in modules (launch, stats, quest-live).
+1. [x] Battle-flow state machine afgerond en gestabiliseerd (`logic/battle-energy.js`).
+2. [x] Click-engine gecentraliseerd in gedeelde helper(s) voor travel/combat/battle.
+2a. [x] `clickHandle` helper ingevoerd en gekoppeld aan combat/battle.
+2b. [x] Resterende travel-click paden naar `clickHandle`-flow gebracht (`logic/travel.js`).
+3. [x] Settings persistence in UI (`public/index.html`, localStorage).
+4. [x] `browser.js` opgesplitst in modules (launch, stats, quest-live).
 5. Structured bot-logging met duidelijke event types en context.
 6. Battle analytics tab in dashboard (wins/losses, energy, misses).
 7. Adaptive anti-fast mode per flow (combat/gather/battle).
@@ -23,3 +25,10 @@
 8. Multi-account safe switch met controller lock awareness.
 9. Visual heatmap van klik-fail/success per knoptype.
 10. Dynamische dag/nacht profile switching.
+
+## Misschien Dit
+1. Circuit breaker: flow tijdelijk pauzeren na X keer "too fast"/click-fail achter elkaar.
+2. Selector health-check scherm: laat live zien welke belangrijke knoppen wel/niet gevonden worden.
+3. Per-flow tempo sliders in UI (travel/combat/battle apart) met veilige min/max grenzen.
+4. Auto screenshot + log snapshot bij fouten (voor snellere debugging).
+5. Daily summary panel: sessietijd, steps, wins, loot, fast-warnings per uur.

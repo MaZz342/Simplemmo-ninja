@@ -21,6 +21,18 @@ const state = {
   targetRerolls: 0
 };
 
+function normalizeActionText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z ]/g, '');
+}
+
+function isExactAttackLabel(value) {
+  return normalizeActionText(value) === 'attack';
+}
+
 function resetPhaseState(nextPhase = PHASE.MENU) {
   state.phase = nextPhase;
   state.generateMisses = 0;
@@ -313,7 +325,7 @@ async function clickAttackDirect(page) {
       if (!isVisible(el)) return false;
       const txt = (el.innerText || el.textContent || el.value || '').trim().toLowerCase();
       if (txt.startsWith('special attack') || txt.startsWith('use item')) return false;
-      return txt === 'attack' || txt.startsWith('attack');
+      return txt === 'attack';
     });
     if (!attackBtn) return false;
     try { attackBtn.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
@@ -420,11 +432,7 @@ async function clickFightAction(page) {
 
     if (info.txt.includes('leave') || info.txt.includes('close')) continue;
     if (/back|cancel|return/.test(info.txt)) continue;
-    if (info.txt === 'attack') {
-      if (await clickHandleRobust(h)) return 'attack';
-      continue;
-    }
-    if (info.txt.includes('attack') && !info.txt.includes('special attack')) {
+    if (isExactAttackLabel(info.txt)) {
       if (await clickHandleRobust(h)) return 'attack';
       continue;
     }
@@ -597,8 +605,42 @@ function isBattleContextUrl(url) {
   return (
     u.includes('/battle') ||
     u.includes('/combat') ||
-    u.includes('/monster/attack')
+    u.includes('/monster/attack') ||
+    u.includes('/npcs/attack')
   );
+}
+
+function isFightUrl(url) {
+  const u = String(url || '').toLowerCase();
+  return u.includes('/combat') || u.includes('/monster/attack') || u.includes('/npcs/attack');
+}
+
+async function hasCombatAttackSurface(page) {
+  return await page.evaluate(() => {
+    const isVisible = (el) => {
+      if (!el || el.disabled) return false;
+      const style = window.getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.pointerEvents === 'none') return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const controls = Array.from(
+      document.querySelectorAll('button, a, [role="button"], .btn, input[type="submit"], input[type="button"]')
+    );
+    const hasAttackFalse = controls.some((el) => {
+      if (!isVisible(el)) return false;
+      const attrs = el.getAttributeNames ? el.getAttributeNames() : [];
+      return attrs.some((name) => {
+        const val = String(el.getAttribute(name) || '').toLowerCase().replace(/\s+/g, '');
+        return val.includes('attack(false');
+      });
+    });
+    if (hasAttackFalse) return true;
+
+    const text = (document.body?.innerText || '').toLowerCase();
+    return text.includes('special attack') && text.includes('use item');
+  }).catch(() => false);
 }
 
 async function handleBattleEnergy(page, socket, sessionStats) {
@@ -642,10 +684,10 @@ async function handleBattleEnergy(page, socket, sessionStats) {
       return humanDelay('combat', 2400, 3600, { afterNav: true });
     }
 
-    if (String(currentUrl).toLowerCase().includes('/combat') && state.phase !== PHASE.FIGHT) {
+    if (isFightUrl(currentUrl) && state.phase !== PHASE.FIGHT) {
       state.phase = PHASE.FIGHT;
       state.fightMisses = 0;
-      socket?.emit('bot-log', 'Battle burst: combat page detected -> switching to fight phase');
+      socket?.emit('bot-log', 'Battle burst: fight page detected -> switching to fight phase');
     }
 
     // Deterministische knop-prioriteit (voorkomt "gek" menu-gedrag):
@@ -659,12 +701,20 @@ async function handleBattleEnergy(page, socket, sessionStats) {
       return humanDelay('combat', 2200, 3600, { afterCombat: true });
     }
 
-    const attackBtn = await findBattleAttackHandle(page);
-    if (attackBtn && await clickHandleRobust(attackBtn)) {
-      state.fightMisses = 0;
-      state.phase = PHASE.FIGHT;
-      socket?.emit('bot-log', 'Battle burst: Attack clicked (attack(false))');
-      return humanDelay('combat', 3000, 4600, { afterCombat: true });
+    const safeFightScreen = isFightUrl(currentUrl) || await hasCombatAttackSurface(page);
+    if (safeFightScreen) {
+      const attackBtn = await findBattleAttackHandle(page);
+      if (attackBtn && await clickHandleRobust(attackBtn)) {
+        state.fightMisses = 0;
+        state.phase = PHASE.FIGHT;
+        socket?.emit('bot-log', 'Battle burst: Attack clicked (attack(false))');
+        return humanDelay('combat', 3000, 4600, { afterCombat: true });
+      }
+    } else if (state.phase === PHASE.FIGHT) {
+      state.fightMisses += 1;
+      if (state.fightMisses % 4 === 1) {
+        socket?.emit('bot-log', `Battle burst: skipping attack outside safe fight screen @ ${currentUrl}`);
+      }
     }
 
     const continueBtn = await findContinueHandle(page);
